@@ -52,7 +52,7 @@ from .data import (
     load_benchmark_data,
     compute_equal_weight_benchmark,
 )
-from .signal import (
+from .momentum_signals import (
     compute_momentum_signals,
     compute_momentum_signals_dynamic,
     compute_momentum_spread,

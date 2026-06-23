@@ -28,3 +28,6 @@ economic_data/
 # 回测输出目录不提交
 strategies/momentum_rotation/output/
 strategies/market_regime_rotation/output/
+
+# 测试脚本（不包含在正式提交中）
+strategies/momentum_rotation/batch_test.py
