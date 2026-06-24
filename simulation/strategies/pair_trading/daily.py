@@ -35,57 +35,92 @@ from simulation.strategies.pair_trading.config import (
 )
 from strategies.pair_trading.engine_switch import compute_pair_signals
 
-from simulation.strategies.momentum_rotation.config import ETF_POOL
-
 logger = logging.getLogger("pair_trading_sim")
 
 
 def build_report(report: dict) -> list[str]:
-    """构建推送文本行。"""
+    """统一格式日结报告（与momentum_rotation格式一致）。"""
     state = report.get("state")
+    lines = []
     action = report.get("action", "unknown")
-    lines = [f"操作: {action}"]
+    # 配对交易只涉及4只ETF，就地定义名称映射
+    _pt_names = {"510050": "上证50", "510300": "沪深300", "159915": "创业板", "588000": "科创50"}
 
+    def name_of(sym):
+        return _pt_names.get(sym, sym[:4])
+
+    lines.append("")
+    lines.append("  ===========================================")
+    lines.append(f"  {STRATEGY_NAME} | {report.get('date', '')}")
+    lines.append(f"  ===========================================")
+
+    # 第一部分：今日信号
     execd = report.get("order_executed")
+    blocked = report.get("order_blocked")
+    risk = report.get("risk")
+    has_signal = False
+
     if execd:
         t = execd.get("type", "")
         if t == "buy":
-            lines.append(f"✅ 开仓: 买入{execd['symbol']} {execd['shares']}股 × {execd['price']:.4f}")
+            lines.append(f"  >> 今日信号: 开仓执行 买入{name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f}")
         elif t == "sell":
-            lines.append(f"✅ 卖出: {execd['symbol']} {execd['shares']}股 盈亏{execd.get('pnl', 0):+.2f}")
+            lines.append(f"  >> 今日信号: 卖出执行 {name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f} 盈亏{execd.get('pnl', 0):+.2f}")
         elif t == "switch":
             s = execd.get("sell", {}); b = execd.get("buy", {})
-            lines.append(f"✅ 切换: 卖{s.get('symbol')} → 买{b.get('symbol')}")
+            lines.append(f"  >> 今日信号: 切换执行 {name_of(s.get('symbol',''))} -> {name_of(b.get('symbol',''))}")
+        has_signal = True
 
-    blocked = report.get("order_blocked")
     if blocked:
-        lines.append(f"🚫 订单取消: {blocked.get('reason', '')}")
+        lines.append(f"  >> 今日信号: 订单取消: {blocked.get('reason', '')}")
+        has_signal = True
 
-    risk = report.get("risk")
+    if state and state.pending_order:
+        po = state.pending_order
+        pa = po.get("action", "?")
+        if pa == "buy":
+            lines.append(f"  >> 今日信号: 买入信号 {name_of(po['symbol'])}（明日执行）")
+        elif pa == "sell":
+            lines.append(f"  >> 今日信号: 卖出信号 {name_of(po['symbol'])}（明日执行）")
+        elif pa == "switch":
+            lines.append(f"  >> 今日信号: 切换信号 {name_of(po['sell_symbol'])}->{name_of(po['buy_symbol'])}（明日执行）")
+        lines.append(f"      原因: {po.get('reason', '')}")
+        has_signal = True
+
     if risk and risk.get("triggered"):
-        lines.append(f"⚠️ 风控: {risk['reason']}")
+        lines.append(f"  >> 今日信号: {risk['reason']}")
+        has_signal = True
 
+    if not has_signal:
+        if action == "hold" or action == "hold_cash":
+            h = name_of(state.position.symbol) if state and state.position.shares > 0 else ""
+            if h:
+                lines.append(f"  >> 今日信号: 持有 {h}，无新切换信号")
+            else:
+                lines.append(f"  >> 今日信号: 空仓观望，无买入信号")
+        elif action == "risk_pending":
+            pass  # 已在risk中显示
+        else:
+            lines.append(f"  >> 今日信号: 无新信号 ({action})")
+
+    # 第二部分：账户日结
+    lines.append(f"  -------------------------------------------")
+    lines.append(f"  账户日结")
     if state:
         pos = state.position
         if pos and pos.shares > 0:
             stock_val = report.get("stock_value", 0)
-            lines.append(f"持仓: {ETF_POOL.get(pos.symbol, pos.symbol)} {pos.shares}股")
-            lines.append(f"市值: ¥{stock_val:.2f}")
-        lines.append(f"现金: ¥{state.cash:.2f}")
-        lines.append(f"总资产: ¥{report.get('total_value', 0):.2f}")
-        tot_ret = (report["total_value"] / state.initial_capital - 1) * 100
-        lines.append(f"总收益率: {tot_ret:+.2f}%")
+            lines.append(f"    持仓: {name_of(pos.symbol)} {pos.shares}股  均价{pos.avg_cost:.4f}")
+            lines.append(f"    市值: {stock_val:>8.2f}")
+        else:
+            lines.append(f"    持仓: 空仓")
+        lines.append(f"    现金: {state.cash:>8.2f}")
+        total_value = report.get("total_value", 0)
+        if state.initial_capital > 0:
+            total_return = (total_value / state.initial_capital - 1) * 100
+            lines.append(f"    总资产: {total_value:>8.2f}  总收益率: {total_return:+8.2f}%")
 
-    ranking = report.get("ranking", {})
-    if ranking:
-        rank_lines = []
-        for rk in range(1, min(len(ranking) + 1, 4)):
-            sym = ranking.get(str(rk))
-            if sym:
-                rank_lines.append(f"  #{rk} {ETF_POOL.get(sym, sym)}")
-        if rank_lines:
-            lines.append("动量排名:"); lines.extend(rank_lines)
-
+    lines.append(f"  ===========================================")
     return lines
 
 
@@ -243,6 +278,9 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
         sym = order["symbol"]
         if sym not in today_data:
             return None, {"type": "buy", "symbol": sym, "reason": "无行情"}
+        # 停牌/零成交量检查
+        if today_data[sym].get("volume", 0) == 0:
+            return None, {"type": "buy", "symbol": sym, "reason": f"{sym} 停牌/零成交量"}
         open_px = today_data[sym]["open"]
         # broker.buy() 内部会自动加滑点，传原始 open 价即可
         result = broker.buy(state, sym, open_px, reason=order.get("reason", ""))
@@ -256,6 +294,9 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
         sym = order["symbol"]
         if sym not in today_data or state.position.shares <= 0:
             return None, {"type": "sell", "symbol": sym, "reason": "无持仓"}
+        # 停牌/零成交量检查
+        if today_data[sym].get("volume", 0) == 0:
+            return None, {"type": "sell", "symbol": sym, "reason": f"{sym} 停牌/零成交量"}
         result = broker.sell(state, today_data[sym]["open"], reason=order.get("reason", ""))
         if result.success:
             return {"type": "sell", "symbol": sym, "shares": result.shares,
@@ -267,6 +308,11 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
         buy_sym = order["buy_symbol"]
         if sell_sym not in today_data or buy_sym not in today_data:
             return None, {"type": "switch", "reason": "无行情"}
+        # 停牌检查（任一停牌则取消）
+        if today_data[sell_sym].get("volume", 0) == 0:
+            return None, {"type": "switch", "reason": f"{sell_sym} 停牌/零成交量"}
+        if today_data[buy_sym].get("volume", 0) == 0:
+            return None, {"type": "switch", "reason": f"{buy_sym} 停牌/零成交量"}
         sell_result = broker.sell(state, today_data[sell_sym]["open"], reason="切换卖出")
         if not sell_result.success:
             return None, {"type": "switch", "reason": f"卖出失败: {sell_result.reason}"}

@@ -59,78 +59,96 @@ STRATEGY_NAME = "动量轮动模拟盘"
 
 
 def build_report(report: dict) -> list[str]:
-    """从引擎日报 dict 构建推送文本行。"""
+    """统一格式日结报告：信号部分 + 账户日结部分。"""
     state = report.get("state")
     lines = []
     action = report.get("action", "unknown")
+    from .config import ETF_POOL as pool
 
-    # 操作
-    action_map = {
-        "open_pending": "📝 待开仓（明日执行）",
-        "switch_pending": "📝 待切换（明日执行）",
-        "risk_pending": "📝 待风控卖出（明日执行）",
-        "hold": "⏸ 持有",
-        "hold_cash": "💵 空仓",
-        "order_blocked": "🚫 涨跌停封锁",
-    }
-    lines.append(f"操作: {action_map.get(action, action)}")
+    def name_of(sym):
+        return pool.get(sym, sym[:4])
 
-    # 已执行的订单
+    lines.append("")
+    lines.append("  ===========================================")
+    lines.append(f"  {STRATEGY_NAME} | {report.get('date', '')}")
+    lines.append(f"  ===========================================")
+
+    # �� 第一部分：今日信号
     execd = report.get("order_executed")
+    blocked = report.get("order_blocked")
+    risk = report.get("risk")
+    has_signal = False
+
     if execd:
         t = execd.get("type", "")
         if t == "buy":
-            lines.append(f"✅ 开仓执行: 买入{execd['symbol']} {execd['shares']}股 × {execd['price']:.4f}")
+            lines.append(f"  >> 今日信号: 开仓执行 买入{name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f}")
         elif t == "sell":
-            lines.append(f"✅ 卖出执行: {execd['symbol']} {execd['shares']}股 × {execd['price']:.4f} 盈亏{execd.get('pnl', 0):+.2f}")
+            lines.append(f"  >> 今日信号: 卖出执行 {name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f} 盈亏{execd.get('pnl', 0):+.2f}")
         elif t == "switch":
-            s = execd.get("sell", {})
-            b = execd.get("buy", {})
-            lines.append(f"✅ 切换执行: 卖{s.get('symbol')} {s.get('shares')}股({s.get('pnl',0):+.2f}) → 买{b.get('symbol')} {b.get('shares')}股")
+            s = execd.get("sell", {}); b = execd.get("buy", {})
+            lines.append(f"  >> 今日信号: 切换执行 {name_of(s.get('symbol',''))} -> {name_of(b.get('symbol',''))}")
+        has_signal = True
 
-    # 被封锁的订单
-    blocked = report.get("order_blocked")
     if blocked:
-        lines.append(f"🚫 订单取消: {blocked.get('reason', '未知')}")
+        lines.append(f"  >> 今日信号: 订单取消: {blocked.get('reason', '')}")
+        has_signal = True
 
-    # 风险
-    risk = report.get("risk")
+    if state and state.pending_order:
+        po = state.pending_order
+        pa = po.get("action", "?")
+        if pa == "buy":
+            lines.append(f"  >> 今日信号: 买入信号 {name_of(po['symbol'])}（明日执行）")
+        elif pa == "sell":
+            lines.append(f"  >> 今日信号: 卖出信号 {name_of(po['symbol'])}（明日执行）")
+        elif pa == "switch":
+            lines.append(f"  >> 今日信号: 切换信号 {name_of(po['sell_symbol'])}->{name_of(po['buy_symbol'])}（明日执行）")
+        lines.append(f"      原因: {po.get('reason', '')}")
+        has_signal = True
+
     if risk and risk.get("triggered"):
-        lines.append(f"⚠️ 风控触发: {risk['reason']}")
+        lines.append(f"  >> 今日信号: {risk['reason']}")
+        has_signal = True
 
-    # 持仓 & 资金
-    if state:
-        pos = state.position
-        if pos and pos.shares > 0:
-            stock_val = report.get("stock_value", 0)
-            lines.append(f"持仓: {pos.symbol} {pos.shares}股 均价{pos.avg_cost:.4f}")
-            lines.append(f"市值: ¥{stock_val:.2f}")
-        lines.append(f"现金: ¥{state.cash:.2f}")
-        lines.append(f"总资产: ¥{report.get('total_value', 0):.2f}")
-        total_return = (report["total_value"] / state.initial_capital - 1) * 100
-        lines.append(f"总收益率: {total_return:+.2f}%")
-
-        # 待执行订单
-        if state.pending_order:
-            po = state.pending_order
-            lines.append(f"待执行: {po.get('action', '?')} {po.get('symbol', po.get('buy_symbol', ''))}")
+    if not has_signal:
+        if action == "hold":
+            h = name_of(state.position.symbol) if state and state.position.shares > 0 else ""
+            lines.append(f"  >> 今日信号: 持有 {h}，无新信号")
+        elif action == "hold_cash":
+            lines.append(f"  >> 今日信号: 空仓观望，无买入信号")
+        else:
+            lines.append(f"  >> 今日信号: 无新信号 ({action})")
 
     # 动量排名
     ranking = report.get("ranking", {})
     if ranking:
-        from strategies.momentum_rotation.config import ETF_POOL as pool
-        rank_lines = []
+        rank_parts = []
         for rk in range(1, min(len(ranking) + 1, 4)):
             sym = ranking.get(str(rk))
             if sym:
-                name = pool.get(sym, sym)
-                rank_lines.append(f"  #{rk} {name}")
-        if rank_lines:
-            lines.append("动量排名:")
-            lines.extend(rank_lines)
+                rank_parts.append(f"#{rk} {name_of(sym)}")
+        if rank_parts:
+            lines.append(f"      动量排名: {' > '.join(rank_parts)}")
 
+    # �� 第二部分：账户日结
+    lines.append(f"  -------------------------------------------")
+    lines.append(f"  账户日结")
+    if state:
+        pos = state.position
+        if pos and pos.shares > 0:
+            stock_val = report.get("stock_value", 0)
+            lines.append(f"    持仓: {name_of(pos.symbol)} {pos.shares}股  均价{pos.avg_cost:.4f}")
+            lines.append(f"    市值: {stock_val:>8.2f}")
+        else:
+            lines.append(f"    持仓: 空仓")
+        lines.append(f"    现金: {state.cash:>8.2f}")
+        total_value = report.get("total_value", 0)
+        if state.initial_capital > 0:
+            total_return = (total_value / state.initial_capital - 1) * 100
+            lines.append(f"    总资产: {total_value:>8.2f}  总收益率: {total_return:+8.2f}%")
+
+    lines.append(f"  ===========================================")
     return lines
-
 
 def main():
     # 日志

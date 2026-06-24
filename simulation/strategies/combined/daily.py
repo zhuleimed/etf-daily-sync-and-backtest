@@ -2,8 +2,7 @@
 组合策略 — 每日模拟盘入口
 
 聚合 momentum_rotation（80%）和 pair_trading（20%）的每日净值。
-
-不直接执行交易，而是读取两个子策略的状态文件，按权重合并净值。
+读取子策略的状态文件，提取信号和持仓信息，按权重合并显示。
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from simulation.framework.state import StateManager, SimState
+from simulation.framework.state import StateManager
 from simulation.framework.data import is_trading_day
 from simulation.framework.notify import push_daily_report, push_error_alert
 
@@ -28,25 +27,63 @@ from simulation.strategies.combined.config import (
 
 logger = logging.getLogger("combined_sim")
 
+ETF_NAMES = {
+    "510050": "上证50", "510300": "沪深300", "510500": "中证500",
+    "512100": "中证1000", "563000": "中证2000", "159915": "创业板",
+    "588000": "科创50",
+}
 
-def _read_state_value(state_path: Path, initial: float) -> float:
-    """从状态文件读取当前总资产。"""
+
+def _read_state(state_path: Path) -> dict | None:
+    """读取JSON状态文件，返回原始dict。"""
     if not state_path.exists():
-        return initial
+        return None
     try:
         with open(state_path) as f:
-            raw = json.load(f)
-        cash = raw.get("cash", initial)
-        pos = raw.get("position", {})
-        shares = pos.get("shares", 0)
-        # 没有最新 close，使用 total_cost + pnl 近似
-        total_cost = pos.get("total_cost", 0)
-        cum_pnl = raw.get("cumulative_pnl", 0)
-        if shares > 0:
-            return cash + total_cost + cum_pnl
-        return cash
+            return json.load(f)
     except Exception:
-        return initial
+        return None
+
+
+def _format_signal(raw: dict | None) -> str:
+    """从状态文件的 pending_order 提取信号描述。"""
+    if not raw:
+        return "无信号"
+    po = raw.get("pending_order")
+    if not po:
+        return "无新信号"
+    action = po.get("action", "?")
+    if action == "buy":
+        sym = po.get("symbol", "")
+        return f"买入{ETF_NAMES.get(sym, sym[:4])}（明日执行）"
+    elif action == "sell":
+        sym = po.get("symbol", "")
+        return f"卖出{ETF_NAMES.get(sym, sym[:4])}（明日执行）"
+    elif action == "switch":
+        s = ETF_NAMES.get(po.get("sell_symbol", ""), po.get("sell_symbol", "")[:4])
+        b = ETF_NAMES.get(po.get("buy_symbol", ""), po.get("buy_symbol", "")[:4])
+        return f"切换{s}->{b}（明日执行）"
+    return f"其他({action})"
+
+
+def _format_holding(raw: dict | None, initial_capital: float) -> str:
+    """从状态文件提取持仓描述和资金状况。"""
+    if not raw:
+        return "空仓", 0.0
+    cash = raw.get("cash", 0)
+    pos = raw.get("position", {})
+    shares = pos.get("shares", 0)
+    symbol = pos.get("symbol", "")
+    total_cost = pos.get("total_cost", 0)
+    cum_pnl = raw.get("cumulative_pnl", 0)
+
+    if shares > 0 and symbol:
+        name = ETF_NAMES.get(symbol, symbol[:4])
+        # 总资产 ≈ 现金 + 持仓成本（近似，不含浮动盈亏）
+        total_value = cash + total_cost
+        return f"{name} {shares}股", total_value
+    else:
+        return "空仓", cash
 
 
 def main():
@@ -59,46 +96,63 @@ def main():
         return
 
     state_dir = Path(STATE_FILE_DIR)
-    mom_state_path = state_dir / "state_momentum_rotation.json"
-    pair_state_path = state_dir / "state_pair_trading.json"
+    mom_raw = _read_state(state_dir / "state_momentum_rotation.json")
+    pair_raw = _read_state(state_dir / "state_pair_trading.json")
 
-    mom_value = _read_state_value(mom_state_path, TOTAL_CAPITAL * MOMENTUM_PCT)
-    pair_value = _read_state_value(pair_state_path, TOTAL_CAPITAL * PAIR_PCT)
+    # ── 提取子策略信号 ──
+    mom_signal = _format_signal(mom_raw)
+    pair_signal = _format_signal(pair_raw)
 
-    # 组合净值 = 80% 动量 + 20% 配对
-    mom_initial = TOTAL_CAPITAL * MOMENTUM_PCT  # 8000
-    pair_initial = TOTAL_CAPITAL * PAIR_PCT       # 2000
+    # ── 提取子策略持仓/资金 ──
+    mom_hold, mom_total = _format_holding(mom_raw, TOTAL_CAPITAL * MOMENTUM_PCT)
+    pair_hold, pair_total = _format_holding(pair_raw, TOTAL_CAPITAL * PAIR_PCT)
 
-    mom_return = mom_value / mom_initial - 1 if mom_initial > 0 else 0
-    pair_return = pair_value / pair_initial - 1 if pair_initial > 0 else 0
+    # 如果状态文件不存在，用初始值
+    if mom_raw is None:
+        mom_hold, mom_total = "空仓（未开始）", TOTAL_CAPITAL * MOMENTUM_PCT
+        mom_signal = "未运行"
+    if pair_raw is None:
+        pair_hold, pair_total = "空仓（未开始）", TOTAL_CAPITAL * PAIR_PCT
+        pair_signal = "未运行"
 
-    weighted_mom = mom_value * MOMENTUM_PCT
-    weighted_pair = pair_value * PAIR_PCT
-    # 实际上组合总资产 = mom_position的实际市值 + pair_position的实际市值
-    # 但这里更准确的组合估值是用比例加权
-    combined_value = mom_initial * (1 + mom_return) + pair_initial * (1 + pair_return)
-    combined_return = combined_value / TOTAL_CAPITAL - 1
+    # ── 计算组合净值 ──
+    mom_initial = TOTAL_CAPITAL * MOMENTUM_PCT
+    pair_initial = TOTAL_CAPITAL * PAIR_PCT
+    mom_return = (mom_total / mom_initial - 1) if mom_initial > 0 else 0
+    pair_return = (pair_total / pair_initial - 1) if pair_initial > 0 else 0
+    combined_total = mom_total + pair_total
+    combined_return = (combined_total / TOTAL_CAPITAL - 1) if TOTAL_CAPITAL > 0 else 0
 
-    # 读取两个子策略的 state 对象（用于保存组合策略的状态）
+    # ── 持久化组合状态 ──
     state_mgr = StateManager(str(STATE_FILE_DIR), "combined")
     state = state_mgr.load() or state_mgr.init_new(TOTAL_CAPITAL)
     state.last_update = today_str
-
-    # 更新组合状态中的现金和总资产
-    state.cash = combined_value  # 将总资产存入 cash（组合无实际持仓）
-    if combined_value > state.peak_value:
-        state.peak_value = combined_value
-
+    state.cash = combined_total
+    if combined_total > state.peak_value:
+        state.peak_value = combined_total
     state_mgr.save(state)
 
-    lines = [
-        f"📊 组合策略汇总 ({today_str})",
-        f"  动量({MOMENTUM_PCT:.0%}): ¥{mom_value:.2f} ({mom_return*100:+.2f}%)",
-        f"  配对({PAIR_PCT:.0%}): ¥{pair_value:.2f} ({pair_return*100:+.2f}%)",
-        f"  ─────────────────────────────",
-        f"  组合总资产: ¥{combined_value:.2f}",
-        f"  组合收益率: {combined_return*100:+.2f}%",
-    ]
+    # ── 统一格式报告 ──
+    lines = []
+    lines.append("")
+    lines.append("  ===========================================")
+    lines.append(f"  {STRATEGY_NAME} | {today_str}")
+    lines.append(f"  ===========================================")
+
+    lines.append(f"  >> 今日子策略信号")
+    lines.append(f"      动量轮动({MOMENTUM_PCT:.0%}): {mom_signal}")
+    lines.append(f"      持仓: {mom_hold}")
+    lines.append(f"      配对交易({PAIR_PCT:.0%}): {pair_signal}")
+    lines.append(f"      持仓: {pair_hold}")
+
+    lines.append(f"  -------------------------------------------")
+    lines.append(f"  组合日结")
+    lines.append(f"    动量(80%): {mom_total:>8.2f}  ({mom_return*100:+7.2f}%)")
+    lines.append(f"    配对(20%): {pair_total:>8.2f}  ({pair_return*100:+7.2f}%)")
+    lines.append(f"    ---------------------------------------")
+    lines.append(f"    组合总资产: {combined_total:>8.2f}  收益率: {combined_return*100:+7.2f}%")
+
+    lines.append(f"  ===========================================")
 
     for line in lines:
         logger.info(line)

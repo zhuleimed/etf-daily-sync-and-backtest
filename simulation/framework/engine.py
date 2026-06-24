@@ -58,6 +58,16 @@ def _check_limit_open(
     return False, ""
 
 
+def _check_suspended(today_data: dict, symbol: str) -> tuple[bool, str]:
+    """检查标的当日是否停牌（成交量=0）。"""
+    if symbol not in today_data:
+        return True, f"{symbol} 无行情数据"
+    volume = today_data[symbol].get("volume", 0)
+    if volume == 0:
+        return True, f"{symbol} 停牌/零成交量"
+    return False, ""
+
+
 class DailySimEngine:
     """每日模拟盘引擎（T+1 待执行订单模式）。"""
 
@@ -305,6 +315,10 @@ class DailySimEngine:
             sym = order["symbol"]
             if sym not in today_data:
                 return None, {"type": "buy", "symbol": sym, "reason": "无行情数据"}
+            # 停牌检查
+            suspended, susp_reason = _check_suspended(today_data, sym)
+            if suspended:
+                return None, {"type": "buy", "symbol": sym, "reason": susp_reason}
             open_px = today_data[sym]["open"]
             pc = prev_close.get(sym, 0)
             blocked, reason = _check_limit_open(sym, open_px, pc)
@@ -323,6 +337,10 @@ class DailySimEngine:
                 return None, {"type": "sell", "symbol": sym, "reason": "无行情数据"}
             if state.position.shares <= 0:
                 return None, {"type": "sell", "symbol": sym, "reason": "无持仓"}
+            # 停牌检查
+            suspended, susp_reason = _check_suspended(today_data, sym)
+            if suspended:
+                return None, {"type": "sell", "symbol": sym, "reason": susp_reason}
             open_px = today_data[sym]["open"]
             pc = prev_close.get(sym, 0)
             blocked, reason = _check_limit_open(sym, open_px, pc)
@@ -340,7 +358,16 @@ class DailySimEngine:
             if sell_sym not in today_data or buy_sym not in today_data:
                 return None, {"type": "switch", "reason": "标的无行情数据"}
 
-            # 两项都检查，任一项被封锁则全部取消
+            # 停牌检查（任一停牌则取消）
+            susp_sell, reason_sell_s = _check_suspended(today_data, sell_sym)
+            susp_buy, reason_buy_s = _check_suspended(today_data, buy_sym)
+            if susp_sell or susp_buy:
+                reasons = []
+                if susp_sell: reasons.append(reason_sell_s)
+                if susp_buy: reasons.append(reason_buy_s)
+                return None, {"type": "switch", "reason": "；".join(reasons)}
+
+            # 涨跌停检查
             open_sell = today_data[sell_sym]["open"]
             open_buy = today_data[buy_sym]["open"]
             pc_sell = prev_close.get(sell_sym, 0)
