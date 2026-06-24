@@ -66,7 +66,7 @@ def build_report(report: dict) -> list[str]:
     from .config import ETF_POOL as pool
 
     def name_of(sym):
-        return pool.get(sym, sym[:4])
+        return f"{pool.get(sym, sym[:4])}({sym})"
 
     lines.append("")
     lines.append("  ===========================================")

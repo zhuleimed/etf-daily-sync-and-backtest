@@ -55,14 +55,16 @@ def _format_signal(raw: dict | None) -> str:
     action = po.get("action", "?")
     if action == "buy":
         sym = po.get("symbol", "")
-        return f"买入{ETF_NAMES.get(sym, sym[:4])}（明日执行）"
+        sym_code = sym
+        return f"买入{ETF_NAMES.get(sym, sym[:4])}({sym_code})（明日执行）"
     elif action == "sell":
         sym = po.get("symbol", "")
-        return f"卖出{ETF_NAMES.get(sym, sym[:4])}（明日执行）"
+        sym_code = sym
+        return f"卖出{ETF_NAMES.get(sym, sym[:4])}({sym_code})（明日执行）"
     elif action == "switch":
-        s = ETF_NAMES.get(po.get("sell_symbol", ""), po.get("sell_symbol", "")[:4])
-        b = ETF_NAMES.get(po.get("buy_symbol", ""), po.get("buy_symbol", "")[:4])
-        return f"切换{s}->{b}（明日执行）"
+        ss = po.get("sell_symbol", "")
+        bs = po.get("buy_symbol", "")
+        return f"切换{ETF_NAMES.get(ss, ss[:4])}({ss})->{ETF_NAMES.get(bs, bs[:4])}({bs})（明日执行）"
     return f"其他({action})"
 
 
@@ -78,10 +80,10 @@ def _format_holding(raw: dict | None, initial_capital: float) -> str:
     cum_pnl = raw.get("cumulative_pnl", 0)
 
     if shares > 0 and symbol:
-        name = ETF_NAMES.get(symbol, symbol[:4])
+        sym_name = ETF_NAMES.get(symbol, symbol[:4])
         # 总资产 ≈ 现金 + 持仓成本（近似，不含浮动盈亏）
         total_value = cash + total_cost
-        return f"{name} {shares}股", total_value
+        return f"{sym_name}({symbol}) {shares}股", total_value
     else:
         return "空仓", cash
 

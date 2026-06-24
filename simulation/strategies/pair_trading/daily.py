@@ -47,7 +47,7 @@ def build_report(report: dict) -> list[str]:
     _pt_names = {"510050": "上证50", "510300": "沪深300", "159915": "创业板", "588000": "科创50"}
 
     def name_of(sym):
-        return _pt_names.get(sym, sym[:4])
+        return f"{_pt_names.get(sym, sym[:4])}({sym})"
 
     lines.append("")
     lines.append("  ===========================================")
