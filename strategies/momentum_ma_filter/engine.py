@@ -1,22 +1,9 @@
 """
-回测引擎核心模块
+动量+均线过滤轮动策略 — 回测引擎核心模块
 
-职责：
-  逐日事件驱动模拟交易，管理持仓、资金、调仓调度与风控。
-  是整个回测框架的总编排器。
-
-核心流程（每个交易日）：
-  1. 接收当日行情数据 ← 2. 风控检查 → 若触发则平仓
-    ↓                             ↓
-  3. 执行渐进调仓（如有）        ← 跳过4-5步
-    ↓
-  4. 计算动量信号 & 排序
-    ↓
-  5. 决策：开仓/调仓/持有
-    ↓
-  6. 更新账户市值，记录当日状态
-
-对齐策略原文 3.6.4 节。
+在 momentum_rotation 引擎基础上增加均线过滤：
+  - 沪深300在60日均线上方 → 正常动量轮动
+  - 沪深300在60日均线下方 → 全部空仓（规避下跌风险）
 """
 
 from dataclasses import dataclass, field
@@ -46,6 +33,9 @@ from .config import (
     ETF_BENCHMARK_MAP,
     RELATIVE_MOMENTUM_FACTOR,
     SHORT_TERM_MOMENTUM_CHECK,
+    MA_FILTER_ENABLED,
+    MA_FILTER_PERIOD,
+    MA_FILTER_BENCHMARK,
 )
 from .data import (
     load_all_etf_data,
@@ -174,9 +164,13 @@ class BacktestEngine:
             end_date=end_date, db_path=db_path,
             momentum_window=self.momentum_window,
         )
+        # 提前基准数据起始日，确保有足够历史计算均线
         try:
+            from datetime import timedelta
+            start_dt = pd.to_datetime(start_date)
+            bench_start = (start_dt - timedelta(days=MA_FILTER_PERIOD * 3)).strftime("%Y-%m-%d")
             self.benchmark_data = load_benchmark_data(
-                start_date=start_date, end_date=end_date, db_path=db_path,
+                start_date=bench_start, end_date=end_date, db_path=db_path,
                 momentum_window=self.momentum_window,
             )
         except ValueError as e:
@@ -512,11 +506,38 @@ class BacktestEngine:
     # 决策
     # ------------------------------------------------------------------
 
+    def _is_market_above_ma(self, idx: int) -> bool:
+        """判断沪深300收盘价是否在均线上方。"""
+        if self.benchmark_data.empty:
+            return True
+        target_date = self.dates[idx]
+        try:
+            bm_idx_pos = self.benchmark_data[
+                self.benchmark_data["date"] == target_date
+            ].index[0]
+        except (IndexError, KeyError):
+            return True  # 无法判断时默认允许交易
+        close = self.benchmark_data.iloc[bm_idx_pos]["close"]
+        if bm_idx_pos < MA_FILTER_PERIOD - 1:
+            return True  # 数据不足时默认允许
+        ma = self.benchmark_data.iloc[
+            bm_idx_pos - MA_FILTER_PERIOD + 1: bm_idx_pos + 1
+        ]["close"].mean()
+        return close > ma
+
+    # ------------------------------------------------------------------
+
     def _make_decision(self, idx: int, today_data: Dict,
                        hold_symbol: Optional[str],
                        target_etf: Optional[str],
                        momentum_series: pd.Series):
         """核心决策：开仓 / 切换 / 持有（支持 TOP-N）。"""
+        # ── 均线过滤：沪深300在均线下方 → 全部空仓 ──
+        if MA_FILTER_ENABLED and not self._is_market_above_ma(idx):
+            if hold_symbol is not None:
+                self._sell_all(idx, today_data, reason="均线过滤空仓")
+            return
+
         if target_etf is None:
             return
         target_mom = momentum_series.get(target_etf, np.nan)

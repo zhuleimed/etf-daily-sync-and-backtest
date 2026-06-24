@@ -1,22 +1,9 @@
 """
-回测引擎核心模块
+波动率过滤轮动策略 — 回测引擎
 
-职责：
-  逐日事件驱动模拟交易，管理持仓、资金、调仓调度与风控。
-  是整个回测框架的总编排器。
-
-核心流程（每个交易日）：
-  1. 接收当日行情数据 ← 2. 风控检查 → 若触发则平仓
-    ↓                             ↓
-  3. 执行渐进调仓（如有）        ← 跳过4-5步
-    ↓
-  4. 计算动量信号 & 排序
-    ↓
-  5. 决策：开仓/调仓/持有
-    ↓
-  6. 更新账户市值，记录当日状态
-
-对齐策略原文 3.6.4 节。
+用沪深300的历史波动率判断市场状态：
+  - 年化波动率 < 阈值 → 低波动→趋势清晰→正常动量轮动
+  - 年化波动率 ≥ 阈值 → 高波动→趋势不稳→空仓避险
 """
 
 from dataclasses import dataclass, field
@@ -46,6 +33,10 @@ from .config import (
     ETF_BENCHMARK_MAP,
     RELATIVE_MOMENTUM_FACTOR,
     SHORT_TERM_MOMENTUM_CHECK,
+    VOL_FILTER_ENABLED,
+    VOL_WINDOW,
+    VOL_THRESHOLD,
+    VOL_BENCHMARK,
 )
 from .data import (
     load_all_etf_data,
@@ -174,9 +165,12 @@ class BacktestEngine:
             end_date=end_date, db_path=db_path,
             momentum_window=self.momentum_window,
         )
+        # 提前基准数据起始日，确保有足够数据计算波动率
         try:
+            start_dt = pd.to_datetime(start_date)
+            bench_start = (start_dt - pd.Timedelta(days=VOL_WINDOW * 4)).strftime("%Y-%m-%d")
             self.benchmark_data = load_benchmark_data(
-                start_date=start_date, end_date=end_date, db_path=db_path,
+                start_date=bench_start, end_date=end_date, db_path=db_path,
                 momentum_window=self.momentum_window,
             )
         except ValueError as e:
@@ -512,11 +506,38 @@ class BacktestEngine:
     # 决策
     # ------------------------------------------------------------------
 
+    def _is_high_volatility(self, idx: int) -> bool:
+        """判断市场是否处于高波动状态。"""
+        if not VOL_FILTER_ENABLED:
+            return False
+        if self.benchmark_data.empty:
+            return False
+        target_date = self.dates[idx]
+        try:
+            bm_idx_pos = self.benchmark_data[
+                self.benchmark_data["date"] == target_date
+            ].index[0]
+        except (IndexError, KeyError):
+            return False
+        if bm_idx_pos < VOL_WINDOW:
+            return False
+        # 计算最近 VOL_WINDOW 个交易日的年化波动率
+        subset = self.benchmark_data.iloc[bm_idx_pos - VOL_WINDOW + 1: bm_idx_pos + 1]
+        daily_vol = subset["pct_chg"].std()
+        annual_vol = daily_vol * (252 ** 0.5)
+        return annual_vol > VOL_THRESHOLD
+
     def _make_decision(self, idx: int, today_data: Dict,
                        hold_symbol: Optional[str],
                        target_etf: Optional[str],
                        momentum_series: pd.Series):
         """核心决策：开仓 / 切换 / 持有（支持 TOP-N）。"""
+        # 波动率过滤：高波动 → 空仓避险
+        if self._is_high_volatility(idx):
+            if hold_symbol is not None:
+                self._sell_all(idx, today_data, reason="高波动空仓避险")
+            return
+
         if target_etf is None:
             return
         target_mom = momentum_series.get(target_etf, np.nan)

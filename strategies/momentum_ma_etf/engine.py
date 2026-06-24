@@ -1,22 +1,10 @@
 """
-回测引擎核心模块
+动量+均线过滤（逐ETF）轮动策略 — 回测引擎
 
-职责：
-  逐日事件驱动模拟交易，管理持仓、资金、调仓调度与风控。
-  是整个回测框架的总编排器。
-
-核心流程（每个交易日）：
-  1. 接收当日行情数据 ← 2. 风控检查 → 若触发则平仓
-    ↓                             ↓
-  3. 执行渐进调仓（如有）        ← 跳过4-5步
-    ↓
-  4. 计算动量信号 & 排序
-    ↓
-  5. 决策：开仓/调仓/持有
-    ↓
-  6. 更新账户市值，记录当日状态
-
-对齐策略原文 3.6.4 节。
+每个ETF独立用自身均线做买入门槛：
+  - close[ETF] > MA(ETF, N) → 进入候选池
+  - close[ETF] ≤ MA(ETF, N) → 排除，持有则卖出
+  - 候选池中按动量排名选最强
 """
 
 from dataclasses import dataclass, field
@@ -46,6 +34,8 @@ from .config import (
     ETF_BENCHMARK_MAP,
     RELATIVE_MOMENTUM_FACTOR,
     SHORT_TERM_MOMENTUM_CHECK,
+    MA_FILTER_ENABLED,
+    MA_FILTER_PERIOD,
 )
 from .data import (
     load_all_etf_data,
@@ -512,6 +502,17 @@ class BacktestEngine:
     # 决策
     # ------------------------------------------------------------------
 
+    def _is_etf_above_ma(self, symbol: str, idx: int) -> bool:
+        """判断指定ETF的收盘价是否在自身均线上方。"""
+        if not MA_FILTER_ENABLED:
+            return True
+        df = self.etf_data.get(symbol)
+        if df is None or idx < MA_FILTER_PERIOD:
+            return True  # 数据不足时默认允许
+        close = df.iloc[idx]["close"]
+        ma = df.iloc[idx - MA_FILTER_PERIOD + 1: idx + 1]["close"].mean()
+        return close > ma
+
     def _make_decision(self, idx: int, today_data: Dict,
                        hold_symbol: Optional[str],
                        target_etf: Optional[str],
@@ -540,11 +541,18 @@ class BacktestEngine:
         target_mom = momentum_series.get(target_etf, np.nan)
         has_position = hold_symbol is not None
 
+        # ── 无持仓：必须同时满足动量>0 和 价格在均线上方 ──
         if not has_position:
-            if target_mom > 0:
+            if (target_mom > 0 and
+                self._is_etf_above_ma(target_etf, idx)):
                 self._buy(target_etf, self.cash, idx, today_data,
                           trade_type="买入", reason="动量信号开仓")
                 self.risk_state.on_open_position(today_data[target_etf]["close"])
+            return
+
+        # ── 有持仓：检查当前标的是否跌破自身均线 ──
+        if not self._is_etf_above_ma(hold_symbol, idx):
+            self._sell_all(idx, today_data, reason=f"{hold_symbol}跌破均线空仓")
             return
 
         if hold_symbol == target_etf:
@@ -553,7 +561,11 @@ class BacktestEngine:
         if np.isnan(current_mom):
             return
 
-        # 最小持仓天数过滤：刚切换不久，不再次切换
+        # ── 有持仓且目标不同：检查目标是否在均线上方 ──
+        if not self._is_etf_above_ma(target_etf, idx):
+            return
+
+        # 最小持仓天数过滤
         if MIN_HOLD_DAYS > 0 and self._days_since_last_switch < MIN_HOLD_DAYS:
             return
 

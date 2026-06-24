@@ -1,22 +1,11 @@
 """
-回测引擎核心模块
+双动量轮动策略 — 回测引擎核心模块
 
-职责：
-  逐日事件驱动模拟交易，管理持仓、资金、调仓调度与风控。
-  是整个回测框架的总编排器。
-
-核心流程（每个交易日）：
-  1. 接收当日行情数据 ← 2. 风控检查 → 若触发则平仓
-    ↓                             ↓
-  3. 执行渐进调仓（如有）        ← 跳过4-5步
-    ↓
-  4. 计算动量信号 & 排序
-    ↓
-  5. 决策：开仓/调仓/持有
-    ↓
-  6. 更新账户市值，记录当日状态
-
-对齐策略原文 3.6.4 节。
+在 momentum_rotation 的动量排名（相对动量）基础上，
+增加绝对动量过滤（每个ETF自身的N日收益>0才可持有）：
+  - 无持仓 → 排名第1且动量>0才开仓（原逻辑已有）
+  - 有持仓 → 持仓ETF动量转负则清仓至现金
+  - 有持仓 → 切换时目标ETF动量必须>0
 """
 
 from dataclasses import dataclass, field
@@ -46,6 +35,7 @@ from .config import (
     ETF_BENCHMARK_MAP,
     RELATIVE_MOMENTUM_FACTOR,
     SHORT_TERM_MOMENTUM_CHECK,
+    ABSOLUTE_MOMENTUM_FILTER,
 )
 from .data import (
     load_all_etf_data,
@@ -551,6 +541,19 @@ class BacktestEngine:
             return
         current_mom = momentum_series.get(hold_symbol, np.nan)
         if np.isnan(current_mom):
+            return
+
+        # ════════════════════════════════════════════════════════════
+        #  双动量过滤（核心！）
+        # ════════════════════════════════════════════════════════════
+
+        # 1. 持仓标的绝对动量转负 → 卖出空仓（不扛下跌）
+        if ABSOLUTE_MOMENTUM_FILTER and current_mom <= 0:
+            self._sell_all(idx, today_data, reason=f"绝对动量转负({current_mom:.4f})空仓")
+            return
+
+        # 2. 目标标的绝对动量≤0 → 不能买入（不切换）
+        if ABSOLUTE_MOMENTUM_FILTER and target_mom <= 0:
             return
 
         # 最小持仓天数过滤：刚切换不久，不再次切换
