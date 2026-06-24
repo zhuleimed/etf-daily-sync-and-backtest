@@ -690,6 +690,7 @@ for each 配对 (大盘ETF, 成长ETF):
 | 13 | **pair_trading 配对交易** | **+25%** | **—** | **-6%** | **42** | **市场中性** |
 
 > 完整分析见 `strategies/STRATEGY_COMPARISON.md`
+> **优化历程：** `strategies/OPTIMIZATION_HISTORY.md`（所有参数调优记录）
 
 ---
 
