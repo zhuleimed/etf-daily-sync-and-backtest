@@ -1,0 +1,13 @@
+"""布林带轮动 - 价格在布林带内的位置"""
+ETF_POOL = {"510050":"上证50","510300":"沪深300","510500":"中证500","512100":"中证1000","563000":"中证2000","159915":"创业板","588000":"科创50"}
+ETF_SYMBOLS = list(ETF_POOL.keys())
+INITIAL_CAPITAL=10000; START_DATE="2024-01-01"; END_DATE=""
+BB_PERIOD=20     # 布林带周期
+BB_STD = 2.0       # 标准差倍数
+TOP_N=1
+COMMISSION_RATE=0.0002; SLIPPAGE=0.0001; TAX_RATE=0.0; ADJUSTMENT_DAYS=5; RISK_MODE="A"
+DB_PATH="data/etf_daily.db"; BENCHMARK_SYMBOL="000300"
+OUTPUT_DIR="strategies/bollinger_rotation/output"
+MOMENTUM_WINDOW = 20
+
+MIN_HOLD_DAYS = 10
