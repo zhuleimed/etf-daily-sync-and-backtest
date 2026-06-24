@@ -104,23 +104,25 @@ def main():
     pair_signal = _format_signal(pair_raw)
 
     # ── 提取子策略持仓/资金 ──
-    mom_hold, mom_total = _format_holding(mom_raw, TOTAL_CAPITAL * MOMENTUM_PCT)
-    pair_hold, pair_total = _format_holding(pair_raw, TOTAL_CAPITAL * PAIR_PCT)
+    SUB_CAPITAL = 10000  # 各子策略独立使用全资 10000
+    mom_hold, mom_total = _format_holding(mom_raw, SUB_CAPITAL)
+    pair_hold, pair_total = _format_holding(pair_raw, SUB_CAPITAL)
 
     # 如果状态文件不存在，用初始值
     if mom_raw is None:
-        mom_hold, mom_total = "空仓（未开始）", TOTAL_CAPITAL * MOMENTUM_PCT
+        mom_hold, mom_total = "空仓（未开始）", SUB_CAPITAL
         mom_signal = "未运行"
     if pair_raw is None:
-        pair_hold, pair_total = "空仓（未开始）", TOTAL_CAPITAL * PAIR_PCT
+        pair_hold, pair_total = "空仓（未开始）", SUB_CAPITAL
         pair_signal = "未运行"
 
     # ── 计算组合净值 ──
-    mom_initial = TOTAL_CAPITAL * MOMENTUM_PCT
-    pair_initial = TOTAL_CAPITAL * PAIR_PCT
-    mom_return = (mom_total / mom_initial - 1) if mom_initial > 0 else 0
-    pair_return = (pair_total / pair_initial - 1) if pair_initial > 0 else 0
-    combined_total = mom_total + pair_total
+    # 子策略独立运行全资，用收益率加权计算组合
+    mom_return = (mom_total / SUB_CAPITAL - 1) if SUB_CAPITAL > 0 else 0
+    pair_return = (pair_total / SUB_CAPITAL - 1) if SUB_CAPITAL > 0 else 0
+    mom_alloc = TOTAL_CAPITAL * MOMENTUM_PCT  # 8000
+    pair_alloc = TOTAL_CAPITAL * PAIR_PCT       # 2000
+    combined_total = mom_alloc * (1 + mom_return) + pair_alloc * (1 + pair_return)
     combined_return = (combined_total / TOTAL_CAPITAL - 1) if TOTAL_CAPITAL > 0 else 0
 
     # ── 持久化组合状态 ──
@@ -147,8 +149,10 @@ def main():
 
     lines.append(f"  -------------------------------------------")
     lines.append(f"  组合日结")
-    lines.append(f"    动量(80%): {mom_total:>8.2f}  ({mom_return*100:+7.2f}%)")
-    lines.append(f"    配对(20%): {pair_total:>8.2f}  ({pair_return*100:+7.2f}%)")
+    mom_display = mom_alloc * (1 + mom_return)
+    pair_display = pair_alloc * (1 + pair_return)
+    lines.append(f"    动量(80%): {mom_display:>8.2f}  ({mom_return*100:+7.2f}%)")
+    lines.append(f"    配对(20%): {pair_display:>8.2f}  ({pair_return*100:+7.2f}%)")
     lines.append(f"    ---------------------------------------")
     lines.append(f"    组合总资产: {combined_total:>8.2f}  收益率: {combined_return*100:+7.2f}%")
 
