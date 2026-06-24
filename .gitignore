@@ -43,3 +43,4 @@ param_scan.py
 # 模拟盘输出
 simulation/output/
 strategies/pair_trading/output/
+strategies/combined/output/

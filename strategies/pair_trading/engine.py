@@ -61,9 +61,11 @@ class DailyRecord:
 class PairTradingEngine:
     """配对交易回测引擎。"""
 
-    def __init__(self, initial_capital: float = INITIAL_CAPITAL):
+    def __init__(self, initial_capital: float = INITIAL_CAPITAL,
+                 capital_per_pair: Optional[float] = None):
         self.initial_capital = initial_capital
         self.cash = initial_capital
+        self.capital_per_pair = capital_per_pair if capital_per_pair else CAPITAL_PER_PAIR
         self.etf_data: Dict[str, pd.DataFrame] = {}
         self.dates: pd.DatetimeIndex = pd.DatetimeIndex([])
 
@@ -100,7 +102,7 @@ class PairTradingEngine:
         """执行完整回测。"""
         n = len(self.dates)
         print(f"  配对交易回测：{self.dates[0].date()} → {self.dates[-1].date()}")
-        print(f"  配对数量：{len(PAIRS)} 对，每对资金 {CAPITAL_PER_PAIR} 元")
+        print(f"  配对数量：{len(PAIRS)} 对，每对资金 {getattr(self, 'capital_per_pair', CAPITAL_PER_PAIR):.0f} 元")
         print(f"  开仓阈值：|z| > {ZSCORE_OPEN}  平仓：|z| < {ZSCORE_CLOSE}  止损：|z| > {ZSCORE_STOP}")
         print(f"  {'=' * 40}")
 
@@ -220,7 +222,7 @@ class PairTradingEngine:
         short_price = today_data[short_sym]["open"] * (1 - SLIPPAGE)
 
         # 多头腿：真实买入
-        long_amount = CAPITAL_PER_PAIR / 2
+        long_amount = self.capital_per_pair / 2
         long_shares = int(long_amount // long_price // 100) * 100
         if long_shares <= 0:
             return
@@ -240,7 +242,7 @@ class PairTradingEngine:
         self.total_trade_cost += commission_long
 
         # 空头腿：合成记录（不开仓不占现金）
-        short_amount = CAPITAL_PER_PAIR / 2
+        short_amount = self.capital_per_pair / 2
         short_shares = int(short_amount // short_price // 100) * 100
 
         pos.active = True
