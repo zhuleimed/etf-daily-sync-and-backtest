@@ -160,8 +160,10 @@ def run_sim_daily(
     report["stock_value"] = stock_value
     report["total_value"] = total_value
 
-    # ── 计算信号 ──
-    signals = compute_pair_signals(etf_data, today_idx)
+    # ── 计算信号（用今日 close，T+1待执行） ──
+    # 注意：传入 today_idx+1，因为 compute_pair_signals 内部 signal_idx = idx-1
+    # 这样 signal_idx = (today_idx+1)-1 = today_idx，使用今日收盘价计算信号
+    signals = compute_pair_signals(etf_data, today_idx + 1)
     ranking = {}
     for i, s in enumerate(signals, 1):
         if s["z"]:
@@ -242,8 +244,8 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
         if sym not in today_data:
             return None, {"type": "buy", "symbol": sym, "reason": "无行情"}
         open_px = today_data[sym]["open"]
-        result = broker.buy(state, sym, open_px * (1 + broker.slippage),
-                            reason=order.get("reason", ""))
+        # broker.buy() 内部会自动加滑点，传原始 open 价即可
+        result = broker.buy(state, sym, open_px, reason=order.get("reason", ""))
         if result.success:
             state.days_since_switch = 0
             return {"type": "buy", "symbol": sym, "shares": result.shares,
@@ -268,7 +270,7 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
         sell_result = broker.sell(state, today_data[sell_sym]["open"], reason="切换卖出")
         if not sell_result.success:
             return None, {"type": "switch", "reason": f"卖出失败: {sell_result.reason}"}
-        buy_result = broker.buy(state, buy_sym, today_data[buy_sym]["open"] * (1 + broker.slippage),
+        buy_result = broker.buy(state, buy_sym, today_data[buy_sym]["open"],
                                 reason="切换买入")
         state.days_since_switch = 0
         return {
