@@ -152,14 +152,20 @@ class PairTradingEngine:
         close_b = df_b.iloc[signal_idx]["close"]
         if close_b == 0:
             return ""
-        spread = close_a / close_b
+        spread = np.log(close_a / close_b)
 
-        # 计算 z-score
-        spreads = df_a.iloc[signal_idx - ZSCORE_PERIOD + 1: signal_idx + 1]["close"].values / \
-                  df_b.iloc[signal_idx - ZSCORE_PERIOD + 1: signal_idx + 1]["close"].values
+        # 计算 z-score（对数比价，统计特性更好）
+        spreads_a = df_a.iloc[signal_idx - ZSCORE_PERIOD + 1: signal_idx + 1]["close"].values
+        spreads_b = df_b.iloc[signal_idx - ZSCORE_PERIOD + 1: signal_idx + 1]["close"].values
+        spreads = np.log(spreads_a / spreads_b)
         mean_s = np.mean(spreads)
         std_s = np.std(spreads)
         z = (spread - mean_s) / std_s if std_s > 0 else 0
+        # 自适应阈值：根据价差波动率动态调整
+        vol_spread = np.std(spreads[-20:]) if len(spreads) >= 20 else std_s
+        adapt_factor = 1.0 + (vol_spread / max(std_s, 0.001) - 1.0) * 0.5
+        open_threshold = ZSCORE_OPEN * min(max(adapt_factor, 0.8), 1.5)
+
 
         # ── 已有持仓的处理 ──
         if pos.active:
@@ -178,13 +184,26 @@ class PairTradingEngine:
 
             return ""  # 继续持有
 
+        # ── 成交量过滤器：确认信号可靠后开仓 ──
+        volume_ok = True
+        for sym in [sym_a, sym_b]:
+            df = self.etf_data.get(sym)
+            if df is not None and signal_idx >= 20:
+                vol_ma = df.iloc[signal_idx - 20: signal_idx + 1]["volume"].mean()
+                if vol_ma > 0 and df.iloc[signal_idx]["volume"] < vol_ma * 0.5:
+                    volume_ok = False
+                    break
+
+        if not volume_ok:
+            return ""
+
         # ── 无持仓：检查开仓信号 ──
-        if z > ZSCORE_OPEN:
+        if z > open_threshold:
             # A 比 B 贵 → 空A多B
             self._open_pair(pos, sym_a, sym_b, idx, today_data, today_str, z, spread, "ab")
             return f"{pair_cfg['name']} 开仓空{str(sym_a)[:4]}多{sym_b[:4]}(z={z:.2f})"
 
-        if z < -ZSCORE_OPEN:
+        if z < -open_threshold:
             # B 比 A 贵 → 多A空B
             self._open_pair(pos, sym_b, sym_a, idx, today_data, today_str, z, spread, "ba")
             return f"{pair_cfg['name']} 开仓多{sym_a[:4]}空{sym_b[:4]}(z={z:.2f})"
