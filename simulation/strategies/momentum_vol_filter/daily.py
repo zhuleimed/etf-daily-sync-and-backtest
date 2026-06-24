@@ -60,13 +60,22 @@ def is_high_volatility(etf_benchmark: pd.DataFrame | None, today_idx: int) -> bo
 
 
 def build_report(report: dict) -> list[str]:
-    """从引擎日报 dict 构建推送文本行。"""
+    """统一格式日结报告（策略名替换为波动率过滤）。"""
     from simulation.strategies.momentum_rotation.daily import build_report as _build
     lines = _build(report)
-    # 在开头插入波动率信息
+    # 修正策略名称（_build输出的是动量轮动的策略名）
+    for i, line in enumerate(lines):
+        if "动量轮动模拟盘" in line:
+            lines[i] = line.replace("动量轮动模拟盘", STRATEGY_NAME)
+            break
+    # 插入波动率信息
     vol_note = report.get("vol_note", "")
-    if vol_note and "操作" in (lines[0] if lines else ""):
-        lines.insert(1, vol_note)
+    if vol_note:
+        # 找到分隔线后的位置插入
+        for i, line in enumerate(lines):
+            if "今日信号" in line and ">" in line:
+                lines.insert(i + 1, f"  {vol_note}")
+                break
     return lines
 
 
