@@ -229,7 +229,7 @@ class BacktestEngine:
     def _buy(self, symbol: str, amount: float, idx: int, today_data: Dict,
              trade_type: str = "买入", reason: str = "") -> int:
         """买入 ETF，记录 BuyLot 用于后续 FIFO 成本核算。"""
-        price = today_data[symbol]["close"] * (1 + SLIPPAGE)
+        price = today_data[symbol]["open"] * (1 + SLIPPAGE)
         max_shares = int(amount // price // 100) * 100
         if max_shares <= 0:
             return 0
@@ -279,7 +279,7 @@ class BacktestEngine:
         if actual <= 0:
             return 0.0
 
-        sell_price = today_data[symbol]["close"] * (1 - SLIPPAGE)
+        sell_price = today_data[symbol]["open"] * (1 - SLIPPAGE)
         revenue = actual * sell_price
         commission = max(revenue * COMMISSION_RATE, 0.0)
         tax = revenue * TAX_RATE
