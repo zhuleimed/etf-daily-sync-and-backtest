@@ -21,7 +21,13 @@ INITIAL_CAPITAL = 10000
 CAPITAL_PER_PAIR = 3333          # 三对均分
 
 ZSCORE_PERIOD = 60               # z-score 统计窗口
-ZSCORE_OPEN = 2.0                # 开仓阈值：|z| > 2.0
+ZSCORE_OPEN = 3.0                # 开仓阈值：|z| > 3.0（优化: 2.0→3.0, 减少噪音信号）
+
+# 不对称阈值（方向感知开仓）
+# 持有价值(上证50/沪深300)时切换至成长(创业板/科创50) 与 反向 使用不同阈值
+# None=使用对称的 ZSCORE_OPEN；设为具体值则覆盖对应方向
+ZSCORE_OPEN_GROWTH: float | None = None  # z > +this → 买成长（小于 ZSCORE_OPEN 则更容易切向成长）
+ZSCORE_OPEN_VALUE: float | None = None   # z < -this → 买价值
 ZSCORE_CLOSE = 0.3               # 平仓阈值：|z| < 0.3（早获利）
 ZSCORE_STOP = 3.0                # 止损阈值：|z| > 3.0
 
