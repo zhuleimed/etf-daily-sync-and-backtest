@@ -184,7 +184,7 @@ if 年化波动率 ≥ 30%:  全部空仓（高波动→趋势不稳→不做）
 | vol_price_momentum 量价 | +55.3% | 0.71 | -21.0% | ❌ |
 | dual_ma_crossover 双均线 | +44.5% | 0.81 | -14.3% | ❌ |
 | low_vol_rotation 低波动率 | +32.4% | 0.58 | -17.8% | ❌ |
-| pair_trading 配对交易 | +20.1% | 0.60 | -7.1% | ✅ 市场中性 |
+| pair_trading 配对交易 | **+31.6%** | **—** | **-8.0%** | ✅ 市场中性 |
 
 **夏普比率排名：** 1.50(ma_etf) → 1.37(ma_filter250) → 1.31(vol_filter) → 1.19(rotation) → 1.10(bollinger) → 0.94(dual) → 0.85(donchian) → 0.81(crossover) → 0.71(量价) → 0.60(pair) → 0.58(low_vol)
 
