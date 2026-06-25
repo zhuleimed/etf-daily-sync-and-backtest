@@ -42,7 +42,7 @@ class TradeRecord:
 @dataclass
 class SimState:
     """完整模拟盘状态。"""
-    version: int = 3               # 版本3 新增 pending_order
+    version: int = 4               # 版本4 新增 total_value
     last_update: str = ""          # YYYY-MM-DD
     cash: float = 0.0
     initial_capital: float = 0.0
@@ -54,6 +54,7 @@ class SimState:
     days_since_switch: int = 999   # 距上次切换的天数（持久化，防重启丢失）
     peak_value: float = 0.0       # 历史峰值总资产（极端回撤用）
     pending_order: Optional[dict] = None  # 待执行订单，格式见 engine.py
+    total_value: float = 0.0      # 当日总资产（最新估值，供 combined 读取）
 
 
 class StateManager:
@@ -121,6 +122,7 @@ class StateManager:
             "days_since_switch": state.days_since_switch,
             "peak_value": state.peak_value,
             "pending_order": state.pending_order,
+            "total_value": state.total_value,
         }
 
     def _from_dict(self, raw: dict) -> SimState:
@@ -146,6 +148,7 @@ class StateManager:
             days_since_switch=raw.get("days_since_switch", 999),
             peak_value=raw.get("peak_value", 0.0),
             pending_order=order,
+            total_value=raw.get("total_value", 0.0),
         )
 
     def append_trade(self, state: SimState, trade: TradeRecord) -> None:

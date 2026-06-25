@@ -196,6 +196,7 @@ class DailySimEngine:
         total_value = state.cash + stock_value
         if total_value > state.peak_value:
             state.peak_value = total_value
+        state.total_value = total_value  # 供 combined 读取最新估值
 
         report["hold_symbol"] = hold_sym if hold_sym else ""
         report["hold_shares"] = state.position.shares

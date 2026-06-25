@@ -81,9 +81,9 @@ def _format_holding(raw: dict | None, initial_capital: float) -> str:
 
     if shares > 0 and symbol:
         sym_name = ETF_NAMES.get(symbol, symbol[:4])
-        # 总资产 ≈ 现金 + 持仓成本（近似，不含浮动盈亏）
-        total_value = cash + total_cost
-        return f"{sym_name}({symbol}) {shares}股", total_value
+        # 使用状态文件中保存的 total_value（含当日浮动盈亏）
+        tv = raw.get("total_value", cash + total_cost)
+        return f"{sym_name}({symbol}) {shares}股", tv
     else:
         return "空仓", cash
 
