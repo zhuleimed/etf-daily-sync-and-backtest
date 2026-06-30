@@ -315,7 +315,7 @@ def main():
         return
 
     # 记录模拟盘日志
-    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
+    append_simulation_log("composite_momentum", STRATEGY_NAME, report, ETF_POOL)
 
     # 7. 推送日报
     report_lines = build_report(report)

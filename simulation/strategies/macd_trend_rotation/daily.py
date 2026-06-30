@@ -149,7 +149,7 @@ def main():
     if "error" in report: logger.error(report["error"]); push_error_alert(STRATEGY_NAME, report["error"]); return
 
     # 记录模拟盘日志
-    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
+    append_simulation_log("macd_trend_rotation", STRATEGY_NAME, report, ETF_POOL)
 
     lines = build_report(report)
     for line in lines: logger.info(line)

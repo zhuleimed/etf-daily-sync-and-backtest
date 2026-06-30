@@ -231,7 +231,7 @@ def main():
         return
 
     # 记录模拟盘日志
-    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
+    append_simulation_log("adx_trend_rotation", STRATEGY_NAME, report, ETF_POOL)
 
     report_lines = build_report(report)
     for line in report_lines:

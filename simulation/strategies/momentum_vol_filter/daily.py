@@ -161,7 +161,7 @@ def main():
         return
 
     # 记录模拟盘日志
-    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
+    append_simulation_log("momentum_vol_filter", STRATEGY_NAME, report, ETF_POOL)
 
     # 波动率过滤覆写：高波动时强制清仓
     high_vol = is_high_volatility(etf_benchmark, today_idx)
