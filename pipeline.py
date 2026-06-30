@@ -101,7 +101,16 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 4. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
+    # ── 4. MACD趋势轮动模拟盘（可选，EMA交叉+加速度） ──
+    {
+        "id": "macd_trend_rotation",
+        "name": "MACD趋势轮动模拟盘",
+        "cmd": ["-m", "simulation.strategies.macd_trend_rotation.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
+    # ── 5. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
     {
         "id": "adx_trend_rotation",
         "name": "ADX趋势强度模拟盘",
