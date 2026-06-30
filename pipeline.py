@@ -101,7 +101,16 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 4. 波动率过滤模拟盘（可选） ──
+    # ── 4. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
+    {
+        "id": "adx_trend_rotation",
+        "name": "ADX趋势强度模拟盘",
+        "cmd": ["-m", "simulation.strategies.adx_trend_rotation.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
+    # ── 5. 波动率过滤模拟盘（可选） ──
     {
         "id": "momentum_vol_filter",
         "name": "波动率过滤模拟盘",
@@ -110,7 +119,7 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 5. 配对交易风格轮动模拟盘（可选） ──
+    # ── 6. 配对交易风格轮动模拟盘（可选） ──
     {
         "id": "pair_trading",
         "name": "配对交易风格轮动模拟盘",
@@ -119,7 +128,7 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 6. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
+    # ── 7. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
     {
         "id": "combined",
         "name": "组合策略模拟盘(动量80%+配对20%)",
