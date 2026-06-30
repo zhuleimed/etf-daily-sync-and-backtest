@@ -25,6 +25,7 @@ from simulation.framework.data import (
     load_latest_data, get_latest_trading_day, is_trading_day,
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
+from simulation.framework.log_writer import append_simulation_log
 
 from simulation.strategies.adx_trend_rotation.config import (
     ETF_POOL, ETF_SYMBOLS, MOMENTUM_WINDOW, MIN_SWITCH_CONVICTION,
@@ -228,6 +229,9 @@ def main():
         logger.error(report["error"])
         push_error_alert(STRATEGY_NAME, report["error"])
         return
+
+    # 记录模拟盘日志
+    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
 
     report_lines = build_report(report)
     for line in report_lines:

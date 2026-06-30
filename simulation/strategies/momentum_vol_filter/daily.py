@@ -28,6 +28,7 @@ from simulation.framework.data import (
     load_latest_data, get_latest_trading_day, is_trading_day,
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
+from simulation.framework.log_writer import append_simulation_log
 
 from simulation.strategies.momentum_vol_filter.config import (
     ETF_POOL, ETF_SYMBOLS, INITIAL_CAPITAL, MOMENTUM_WINDOW,
@@ -158,6 +159,9 @@ def main():
     if "error" in report:
         push_error_alert(STRATEGY_NAME, report["error"])
         return
+
+    # 记录模拟盘日志
+    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
 
     # 波动率过滤覆写：高波动时强制清仓
     high_vol = is_high_volatility(etf_benchmark, today_idx)

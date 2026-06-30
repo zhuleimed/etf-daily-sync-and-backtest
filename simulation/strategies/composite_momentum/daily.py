@@ -31,6 +31,7 @@ from simulation.framework.data import (
     is_trading_day,
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
+from simulation.framework.log_writer import append_simulation_log
 
 from simulation.strategies.composite_momentum.config import (
     ETF_POOL,
@@ -312,6 +313,9 @@ def main():
         logger.error(report["error"])
         push_error_alert(STRATEGY_NAME, report["error"])
         return
+
+    # 记录模拟盘日志
+    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
 
     # 7. 推送日报
     report_lines = build_report(report)

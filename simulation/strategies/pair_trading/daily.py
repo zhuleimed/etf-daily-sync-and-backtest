@@ -27,6 +27,7 @@ from simulation.framework.data import (
     load_latest_data, get_latest_trading_day, is_trading_day,
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
+from simulation.framework.log_writer import append_simulation_log
 
 from simulation.strategies.pair_trading.config import (
     PAIRS, INITIAL_CAPITAL, ZSCORE_PERIOD, ZSCORE_OPEN,
@@ -375,6 +376,9 @@ def main():
     if "error" in report:
         push_error_alert(STRATEGY_NAME, report["error"])
         return
+
+    # 记录模拟盘日志
+    append_simulation_log(STRATEGY_NAME, report, ETF_POOL)
 
     report_lines = build_report(report)
     for line in report_lines:

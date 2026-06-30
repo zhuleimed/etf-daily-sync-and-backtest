@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from simulation.framework.state import StateManager
 from simulation.framework.data import is_trading_day
 from simulation.framework.notify import push_daily_report, push_error_alert
+from simulation.framework.log_writer import append_simulation_log
 
 from simulation.strategies.combined.config import (
     TOTAL_CAPITAL, MOMENTUM_PCT, PAIR_PCT,
