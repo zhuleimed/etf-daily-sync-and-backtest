@@ -67,8 +67,10 @@ python main.py --backfill                          # 回填历史数据
 python -m strategies.momentum_vol_filter.run        # 跑最优策略回测
 python -m strategies.pair_trading.run                # 跑配对交易回测
 python -m strategies.combined.run                    # 跑组合策略回测
+python -m strategies.composite_momentum.run          # 跑复合动量回测
 python pipeline.py                                   # 手动触发每日管线
 python -m simulation.strategies.momentum_rotation.daily  # 手动跑模拟盘
+python -m simulation.strategies.composite_momentum.daily  # 手动跑复合动量模拟盘
 ```
 
 ### 1.3 文件系统布局速览
@@ -154,6 +156,7 @@ python -m simulation.strategies.momentum_rotation.daily  # 手动跑模拟盘
 │   ├── bollinger_rotation/         # ⑪ 布林带轮动
 │   ├── pair_trading/               # ⑫ 配对交易（市场中性）
 │   ├── combined/                   # ⑬ 组合策略（动量80%+配对20%）
+│   ├── composite_momentum/          # ⑭ 复合动量轮动（多因子打分）
 │   │
 │   └── 每个策略目录结构：
 │       ├── __init__.py
@@ -183,7 +186,11 @@ python -m simulation.strategies.momentum_rotation.daily  # 手动跑模拟盘
 │       ├── risk.py                 # 止损/止盈/极端回撤
 │       └── notify.py               # WxPusher 推送
 │   └── strategies/                 # 各策略模拟盘入口
-│       └── momentum_rotation/
+│       ├── momentum_rotation/
+│       │   ├── __init__.py
+│       │   ├── config.py           # 模拟盘特有配置
+│       │   └── daily.py            # 每日运行入口
+│       └── composite_momentum/
 │           ├── __init__.py
 │           ├── config.py           # 模拟盘特有配置
 │           └── daily.py            # 每日运行入口
@@ -839,7 +846,7 @@ def compute_equal_weight_benchmark(etf_data):
 
 ---
 
-## 11. 13 种策略一览
+## 11. 14 种策略一览
 
 ### 11.1 策略总览
 
@@ -858,6 +865,7 @@ def compute_equal_weight_benchmark(etf_data):
 | 11 | 布林带 | `bollinger_rotation/` | 布林带位置打分 | 震荡 |
 | 12 | **配对交易** | `pair_trading/` | z-score价差回归，多空对冲 | 市场中性 |
 | 13 | **组合策略** | `combined/` | 80%动量+20%配对 | 混合 |
+| 14 | **复合动量** ⭐ | `composite_momentum/` | 多因子复合打分(四因子) | 趋势 |
 
 ### 11.2 各策略详细说明
 
@@ -926,6 +934,15 @@ if 目标ETF动量 ≤ 0:  不切换
 特点: 纯多头，无需融券，真实可执行。2023-2026 每年正收益。
 特点: 市场中性，不依赖大盘方向。2023年熊市仅-0.16%。
 
+**⑭ composite_momentum — 复合动量轮动（+119%, 夏普1.25）**
+```
+四因子复合打分 = 趋势40% + 夏普25% + 质量20% + 成交量15% → Z-Score合成 → 排名选第1
+```
+参数: 多因子权重(可配置), MIN_HOLD_DAYS=5, MARKET_MA_PERIOD=60
+特点: 多维度打分，风控B模式下夏普1.25，回撤仅-17%。
+因子截面Z-Score标准化确保量纲一致。
+市场状态过滤器(沪深300 MA60)熊市自动降仓。
+
 **⑬ combined — 组合策略（+108%, 夏普1.11）**
 ```
 总资金: 80% → 动量轮动（进攻）
@@ -943,10 +960,12 @@ if 目标ETF动量 ≤ 0:  不切换
 | # | 策略 | 总收益 | 夏普 | 最大回撤 | 年化 | 切换 |
 |---|------|--------|------|---------|------|------|
 | 1 | ma_etf 逐ETF均线 | **+191%** | **1.50** | -26% | 55% | — |
-| 2 | ma_filter MA=250 | **+167%** | **1.37** | -26% | 51% | — |
+| 2 | **composite_momentum 复合动量** | **+119%** | **1.25** | **-17%** | **39%** | **61** |
+| 3 | ma_filter MA=250 | **+167%** | **1.37** | -26% | 51% | — |
 | 3 | rotation 纯动量 | **+133%** | **1.19** | -26% | 44% | 19 |
-| 4 | **vol_filter 波动率过滤** | **+117%** | **1.31** | **-23%** | **41%** | **19** |
-| 5 | combined 动量+配对 | +108% | 1.11 | -24% | 38% | — |
+| 4 | **composite_momentum 复合动量** | **+119%** | **1.25** | **-17%** | **39%** | **61** |
+| **vol_filter 波动率过滤** | **+117%** | **1.31** | **-23%** | **41%** | **19** |
+| 6 | combined 动量+配对 | +108% | 1.11 | -24% | 38% | — |
 | 6 | bollinger 布林带 | +108% | 1.10 | -20% | 38% | 217 |
 | 7 | dual 双动量 | +86% | 0.94 | -28% | 32% | 33 |
 | 8 | mean_reversion 均值回归 | +80% | 0.94 | -17% | 30% | 136 |
@@ -961,6 +980,7 @@ if 目标ETF动量 ≤ 0:  不切换
 
 | 偏好 | 推荐策略 | 理由 |
 |------|---------|------|
+| **风险调整最优** | **composite_momentum 夏普1.25** | **多因子打分,回撤仅-17%** |
 | 追求绝对收益 | ma_etf +191% | 收益最高，但回撤大 |
 | **风险调整最优** | **vol_filter 夏普1.31** | 每单位风险回报最高 |
 | 追求稳定性 | pair_trading(原) 回撤6% | 市场中性，熊市不亏（需融券） |

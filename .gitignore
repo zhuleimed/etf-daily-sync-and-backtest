@@ -44,6 +44,7 @@ param_scan.py
 simulation/output/
 strategies/pair_trading/output/
 strategies/combined/output/
+strategies/composite_momentum/output/
 
 # 运行时状态文件
 pipeline_status.json

@@ -92,7 +92,16 @@ STEPS: list[dict] = [
         "required": True,
         "timeout": 600,  # 10min
     },
-    # ── 3. 波动率过滤模拟盘（可选） ──
+    # ── 3. 复合动量模拟盘（可选，多因子复合打分） ──
+    {
+        "id": "composite_momentum",
+        "name": "复合动量模拟盘",
+        "cmd": ["-m", "simulation.strategies.composite_momentum.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
+    # ── 4. 波动率过滤模拟盘（可选） ──
     {
         "id": "momentum_vol_filter",
         "name": "波动率过滤模拟盘",
@@ -101,7 +110,7 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 4. 配对交易风格轮动模拟盘（可选） ──
+    # ── 5. 配对交易风格轮动模拟盘（可选） ──
     {
         "id": "pair_trading",
         "name": "配对交易风格轮动模拟盘",
@@ -110,7 +119,7 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 5. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
+    # ── 6. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
     {
         "id": "combined",
         "name": "组合策略模拟盘(动量80%+配对20%)",
