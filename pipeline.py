@@ -110,7 +110,16 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
-    # ── 5. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
+    # ── 5. RSI趋势确认模拟盘（可选，RSI>50多头过滤） ──
+    {
+        "id": "rsi_trend_rotation",
+        "name": "RSI趋势确认模拟盘",
+        "cmd": ["-m", "simulation.strategies.rsi_trend_rotation.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
+    # ── 6. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
     {
         "id": "adx_trend_rotation",
         "name": "ADX趋势强度模拟盘",

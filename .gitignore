@@ -45,6 +45,9 @@ simulation/output/
 strategies/pair_trading/output/
 strategies/combined/output/
 strategies/composite_momentum/output/
+strategies/adx_trend_rotation/output/
+strategies/macd_trend_rotation/output/
+strategies/rsi_trend_rotation/output/
 
 # 运行时状态文件
 pipeline_status.json
