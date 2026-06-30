@@ -230,7 +230,7 @@ class DailySimEngine:
             report["state"] = state
             return report
 
-        # ── 7. 计算信号 → 产生待执行订单 ──
+        # ── 7. 计算信号 → 产生待执行订单（明日执行） ──
         momentum = self.signal_func(etf_data, today_idx, self.momentum_window)
         ranking = self.rank_func(momentum)
         target_etf = ranking.get(1) if len(ranking) > 0 else None
@@ -238,47 +238,43 @@ class DailySimEngine:
 
         report["ranking"] = {str(k): str(v) for k, v in ranking.items()} if len(ranking) > 0 else {}
 
-        has_position = state.position.shares > 0
+        # ── 重要：当日已有订单执行时，不覆盖 action ──
+        # 第4步已将 action 设为 "open"/"switch"/"risk_sell"/"order_blocked"
+        # 这些描述了"今日发生了什么"，不应被后续信号逻辑覆盖
+        if not report.get("order_executed") and not report.get("order_blocked"):
+            has_position = state.position.shares > 0
 
-        if not has_position:
-            # 无持仓 → 若动量 > 0，产生买入待执行订单
-            if target_etf is not None and not pd.isna(target_mom) and target_mom > 0:
-                state.pending_order = {
-                    "action": "buy",
-                    "symbol": target_etf,
-                    "reason": "动量信号开仓",
-                    "created": today_str,
-                }
-                report["action"] = "open_pending"
-            else:
-                report["action"] = "hold_cash"
-
-        elif state.days_since_switch < self.min_hold_days:
-            # 有持仓但持仓天数不足 → 继续持有
-            report["action"] = "hold"
-
-        elif target_etf is None or pd.isna(target_mom):
-            # 有效信号缺失 → 持有
-            report["action"] = "hold"
-
-        elif hold_sym in today_data:
-            current_mom = momentum.get(hold_sym, float("nan"))
-            if not pd.isna(current_mom) and not pd.isna(target_mom):
-                excess = target_mom - current_mom
-                if excess > self.min_switch_conviction:
-                    # 切换！产生待执行订单（明天以 open 价卖旧买新）
+            if not has_position:
+                if target_etf is not None and not pd.isna(target_mom) and target_mom > 0:
                     state.pending_order = {
-                        "action": "switch",
-                        "sell_symbol": hold_sym,
-                        "buy_symbol": target_etf,
-                        "reason": "动量切换",
-                        "created": today_str,
+                        "action": "buy", "symbol": target_etf,
+                        "reason": "动量信号开仓", "created": today_str,
                     }
-                    report["action"] = "switch_pending"
+                    report["action"] = "open_pending"
                 else:
-                    report["action"] = "hold"
-        else:
-            report["action"] = "hold"
+                    report["action"] = "hold_cash"
+
+            elif state.days_since_switch < self.min_hold_days:
+                report["action"] = "hold"
+
+            elif target_etf is None or pd.isna(target_mom):
+                report["action"] = "hold"
+
+            elif hold_sym in today_data:
+                current_mom = momentum.get(hold_sym, float("nan"))
+                if not pd.isna(current_mom) and not pd.isna(target_mom):
+                    excess = target_mom - current_mom
+                    if excess > self.min_switch_conviction:
+                        state.pending_order = {
+                            "action": "switch", "sell_symbol": hold_sym,
+                            "buy_symbol": target_etf, "reason": "动量切换", "created": today_str,
+                        }
+                        report["action"] = "switch_pending"
+                    else:
+                        report["action"] = "hold"
+            else:
+                report["action"] = "hold"
+        # else: 已有执行类action，保留不改（如"open"、"switch"、"risk_sell"）
 
         # ── 8. 持久化状态 ──
         self.state_mgr.save(state)

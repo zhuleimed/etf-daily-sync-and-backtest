@@ -21,9 +21,8 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "output"
 
@@ -194,64 +193,6 @@ def _make_order_executed_description(report: dict) -> str:
 # ═══════════════════════════════════════════════════════════════
 #  公开 API
 # ═══════════════════════════════════════════════════════════════
-
-
-def initialize_strategy_log(
-    strategy_id: str,
-    strategy_name: str,
-    last_update: str,
-    initial_capital: float,
-    cash: float,
-    position_symbol: str,
-    position_shares: int,
-    avg_cost: float,
-    etf_pool: dict[str, str],
-) -> None:
-    """为已有模拟盘状态记录一笔"起始行"（追记当前状态）。
-
-    当检测到 state_{strategy_id}.json 存在但没有对应 CSV 时调用。
-    从状态文件读取当前持仓和资金，结合数据库收盘价估算市值。
-    """
-    csv_path = _csv_path(strategy_id)
-    if csv_path.exists():
-        return  # 已有 CSV，无需初始化
-
-    # 查询收盘价估算市值
-    stock_value = 0.0
-    close_price = 0.0
-    if position_symbol and position_shares > 0:
-        close_price = _lookup_close(position_symbol, last_update)
-        stock_value = position_shares * close_price if close_price > 0 else 0.0
-
-    total_value = cash + stock_value
-    cum_ret = ""
-    if initial_capital > 0:
-        cum_ret = f"{(total_value / initial_capital - 1) * 100:.2f}%"
-
-    hold_name = etf_pool.get(position_symbol, position_symbol) if position_symbol else ""
-    hold_cost = f"{avg_cost:.4f}" if position_symbol and position_shares > 0 else ""
-
-    row = {
-        "日期": f"{last_update} ←起航",
-        "策略": strategy_name,
-        "操作": "模拟盘从此日状态开始记录" + ("（有持仓）" if position_shares > 0 else "（空仓）"),
-        "持仓标的": position_symbol,
-        "持仓名称": hold_name,
-        "持仓数量": position_shares,
-        "持仓均价": hold_cost,
-        "现金": round(cash, 2),
-        "市值": round(stock_value, 2),
-        "总资产": round(total_value, 2),
-        "累计收益率": cum_ret,
-        "订单执行": "",
-        "明日待执行": "",
-    }
-
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=_FIELDS)
-        writer.writeheader()
-        writer.writerow(row)
 
 
 def append_simulation_log(
