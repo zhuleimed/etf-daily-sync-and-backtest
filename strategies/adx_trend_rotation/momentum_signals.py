@@ -172,7 +172,7 @@ def compute_adx_scores(
     -------
     pd.Series: index=ETF代码, values=综合得分（<=0 表示不满足条件）
     """
-    needed = ADX_PERIOD * 2 + 5  # 至少需要 2×period 个数据点
+    needed = cfg.ADX_PERIOD * 2 + 5  # 至少需要 2×period 个数据点
     adx_values = {}
     di_plus_vals = {}
     di_minus_vals = {}
