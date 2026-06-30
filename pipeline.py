@@ -119,6 +119,15 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
+    # ── 6. 自适应轮动模拟盘（可选，牛市动量+震荡均值回归） 🆕 ──
+    {
+        "id": "adaptive_rotation",
+        "name": "自适应轮动模拟盘",
+        "cmd": ["-m", "simulation.strategies.adaptive_rotation.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
     # ── 6. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
     {
         "id": "adx_trend_rotation",

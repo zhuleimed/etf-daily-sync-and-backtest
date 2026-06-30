@@ -51,3 +51,4 @@ strategies/rsi_trend_rotation/output/
 
 # 运行时状态文件
 pipeline_status.json
+strategies/adaptive_rotation/output/
