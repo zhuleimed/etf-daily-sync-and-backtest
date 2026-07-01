@@ -27,6 +27,7 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 from pipeline_status import PipelineStatus, push_pipeline_summary
 from simulation.framework.notify import send_message
+from simulation.framework.summary import push_strategy_summary, gather_pipeline_info
 
 # ════════════════════════════════════════════════════════════
 #  常量
@@ -278,11 +279,19 @@ def main():
     status = "completed" if pipeline_ok else "failed"
     ps.finish(status)
 
-    # 推送汇总
+    # 推送管线汇总
     try:
         push_pipeline_summary(ps.to_dict(), send_message)
     except Exception as e:
-        print(f"  ⚠ 推送汇总异常: {e}")
+        print(f"  ⚠ 推送管线汇总异常: {e}")
+
+    # 推送策略汇总日报
+    try:
+        output_dir = str(PROJECT_DIR / "simulation" / "output")
+        pinfo = gather_pipeline_info(PROJECT_DIR / "pipeline_status.json")
+        push_strategy_summary(output_dir, send_message, pipeline_info=pinfo)
+    except Exception as e:
+        print(f"  ⚠ 推送策略汇总异常: {e}")
 
     print(f"\n  {'=' * 55}")
     print(f"  管线状态: {status}")
