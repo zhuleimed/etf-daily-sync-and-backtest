@@ -65,19 +65,54 @@ def build_report(report: dict) -> list[str]:
     lines.append(f"  {STRATEGY_NAME} | {report.get('date', '')}")
     lines.append(f"  ===========================================")
 
+    # 今日信号
     execd = report.get("order_executed")
+    blocked = report.get("order_blocked")
+    risk = report.get("risk")
     has_signal = False
+
     if execd:
         t = execd.get("type", "")
         if t == "buy":
             lines.append(f"  >> 今日信号: 开仓执行 买入{name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f}")
         elif t == "sell":
-            lines.append(f"  >> 今日信号: 卖出执行 {name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f}")
+            lines.append(f"  >> 今日信号: 卖出执行 {name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f} 盈亏{execd.get('pnl', 0):+.2f}")
         elif t == "switch":
             s = execd.get("sell", {}); b = execd.get("buy", {})
             lines.append(f"  >> 今日信号: 切换执行 {name_of(s.get('symbol',''))} -> {name_of(b.get('symbol',''))}")
         has_signal = True
 
+    if blocked:
+        lines.append(f"  >> 今日信号: 订单取消: {blocked.get('reason', '')}")
+        has_signal = True
+
+    if state and state.pending_order:
+        po = state.pending_order
+        pa = po.get("action", "?")
+        if pa == "buy":
+            lines.append(f"  >> 今日信号: 买入信号 {name_of(po['symbol'])}（明日执行）")
+        elif pa == "sell":
+            lines.append(f"  >> 今日信号: 卖出信号 {name_of(po['symbol'])}（明日执行）")
+        elif pa == "switch":
+            lines.append(f"  >> 今日信号: 切换信号 {name_of(po['sell_symbol'])}->{name_of(po['buy_symbol'])}（明日执行）")
+        lines.append(f"      原因: {po.get('reason', '')}")
+        has_signal = True
+
+    if risk and risk.get("triggered"):
+        lines.append(f"  >> 今日信号: {risk['reason']}")
+        has_signal = True
+
+    if not has_signal:
+        action = report.get("action", "unknown")
+        if action == "hold":
+            h = name_of(state.position.symbol) if state and state.position.shares > 0 else ""
+            lines.append(f"  >> 今日信号: 持有 {h}，无新信号")
+        elif action == "hold_cash":
+            lines.append(f"  >> 今日信号: 空仓观望")
+        else:
+            lines.append(f"  >> 今日信号: 无新信号 ({action})")
+
+    # 排名
     ranking = report.get("ranking", {})
     if ranking:
         rank_parts = []
@@ -87,6 +122,11 @@ def build_report(report: dict) -> list[str]:
                 rank_parts.append(f"#{rk} {name_of(sym)}")
         if rank_parts:
             lines.append(f"      排名: {' > '.join(rank_parts)}")
+
+    # 市场状态提示（自适应特有）
+    state_obj = report.get("state")
+    if state_obj and hasattr(state_obj, 'pending_order'):
+        pass  # pending已在上面处理
 
     lines.append(f"  -------------------------------------------")
     lines.append(f"  账户日结")

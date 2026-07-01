@@ -21,5 +21,8 @@ DRAWDOWN_THRESHOLD = 0.15
 MIN_SWITCH_CONVICTION = 0.03
 MIN_HOLD_DAYS = 5
 
+# DailySimEngine 兼容参数
+MOMENTUM_WINDOW = MOM_WINDOW              # 供 daily.py 导入
+
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "output"
 STATE_FILE_DIR = OUTPUT_DIR
