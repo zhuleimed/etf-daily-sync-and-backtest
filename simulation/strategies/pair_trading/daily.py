@@ -32,7 +32,7 @@ from simulation.framework.log_writer import append_simulation_log
 from simulation.strategies.pair_trading.config import (
     PAIRS, INITIAL_CAPITAL, ZSCORE_PERIOD, ZSCORE_OPEN,
     ZSCORE_CLOSE, ZSCORE_STOP, COMMISSION_RATE, SLIPPAGE, DB_PATH,
-    STRATEGY_NAME, STATE_FILE_DIR,
+    STRATEGY_NAME, STATE_FILE_DIR, ETF_POOL,
 )
 from strategies.pair_trading.engine_switch import compute_pair_signals
 

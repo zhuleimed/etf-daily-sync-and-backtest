@@ -195,7 +195,7 @@ def main():
         signal_func=compute_adaptive_signals_wrapper,
         rank_func=rank_etfs_by_adaptive,
         etf_pool=ETF_POOL,
-        momentum_window=MOM_WINDOW,
+        momentum_window=MOMENTUM_WINDOW,
         min_switch_conviction=MIN_SWITCH_CONVICTION,
         min_hold_days=MIN_HOLD_DAYS,
         risk_mode=RISK_MODE,
