@@ -7,3 +7,11 @@ from simulation.strategies.momentum_rotation.config import OUTPUT_DIR
 
 STRATEGY_NAME = "配对交易风格轮动模拟盘"
 STATE_FILE_DIR = OUTPUT_DIR
+
+# 配对交易涉及的4只ETF（用于CSV日志的持仓名称映射）
+ETF_POOL = {
+    "510050": "上证50ETF（华夏）",
+    "510300": "沪深300ETF（华泰柏瑞）",
+    "159915": "创业板ETF（易方达）",
+    "588000": "科创50ETF（华夏）",
+}
