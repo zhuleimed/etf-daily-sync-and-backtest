@@ -191,6 +191,11 @@ def run_sim_daily(
         stock_value = state.position.shares * today_data[hold_sym]["close"]
     total_value = state.cash + stock_value
 
+    # 更新状态中的总资产（供 combined 策略读取）
+    state.total_value = total_value
+    if total_value > state.peak_value:
+        state.peak_value = total_value
+
     report["hold_symbol"] = hold_sym or ""
     report["hold_shares"] = state.position.shares
     report["stock_value"] = stock_value
