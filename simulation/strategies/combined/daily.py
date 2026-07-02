@@ -133,6 +133,7 @@ def main():
     state = state_mgr.load() or state_mgr.init_new(TOTAL_CAPITAL)
     state.last_update = today_str
     state.cash = combined_total
+    state.total_value = combined_total
     if combined_total > state.peak_value:
         state.peak_value = combined_total
     state_mgr.save(state)
