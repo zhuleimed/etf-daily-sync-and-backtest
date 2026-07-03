@@ -15,11 +15,17 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
+
+# 强制 stdout/stderr 无缓冲，确保日志按时间顺序写入文件
+os.environ["PYTHONUNBUFFERED"] = "1"
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 # ── 让 Python 能找到项目包 ──
 PROJECT_DIR: Path = Path(__file__).parent.resolve()
