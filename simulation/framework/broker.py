@@ -92,9 +92,10 @@ class SimBroker:
         state.position.total_cost = total_cost
         state.position.highest_price = buy_price
         state.position.today_opened = True
+        state.position.buy_date = state.last_update  # 记录买入日期
 
-        # 扣现金
-        state.cash -= total_cost
+        # 扣现金（源头推导公式）
+        state.cash = state.initial_capital - state.position.total_cost + state.cumulative_pnl
         state.cumulative_cost += commission
 
         # 记日志
@@ -142,7 +143,6 @@ class SimBroker:
         net_revenue = revenue - commission
 
         pnl = net_revenue - state.position.total_cost
-        state.cash += net_revenue
         state.cumulative_pnl += pnl
         state.cumulative_cost += commission
 
@@ -159,16 +159,24 @@ class SimBroker:
             reason=reason,
         ))
 
+        # 保存卖出前的截图
+        old_total_cost = state.position.total_cost
+        old_shares = state.position.shares
+
         # 清空持仓
         result = TradeResult(
-            shares=state.position.shares,
+            shares=old_shares,
             price=round(sell_price, 4),
             amount=round(revenue, 2),
             commission=round(commission, 2),
-            net_cost=state.position.total_cost,
+            net_cost=old_total_cost,
             pnl=round(pnl, 2),
         )
         state.position = self._empty_position()
+
+        # 源头推导现金（position.total_cost=0 → cash = initial_capital + cumulative_pnl）
+        state.cash = state.initial_capital - state.position.total_cost + state.cumulative_pnl
+
         return result
 
     def _empty_position(self):

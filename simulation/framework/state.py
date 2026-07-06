@@ -24,6 +24,7 @@ class PositionState:
     total_cost: float = 0.0       # 持仓总成本
     highest_price: float = 0.0    # 持仓期间最高价（移动止盈用）
     today_opened: bool = False    # 今日新开仓（T+1 保护）
+    buy_date: str = ""            # 买入日期（供已平仓交易记录使用）
 
 
 @dataclass
@@ -140,6 +141,7 @@ class StateManager:
                 total_cost=pos.get("total_cost", 0.0),
                 highest_price=pos.get("highest_price", 0.0),
                 today_opened=pos.get("today_opened", False),
+                buy_date=pos.get("buy_date", ""),
             ),
             cumulative_pnl=raw.get("cumulative_pnl", 0.0),
             cumulative_cost=raw.get("cumulative_cost", 0.0),
@@ -150,6 +152,28 @@ class StateManager:
             pending_order=order,
             total_value=raw.get("total_value", 0.0),
         )
+
+    def reconcile_cash(self, state: SimState) -> float:
+        """源头推导现金，修正偏差。
+
+        公式：cash = initial_capital - position.total_cost + cumulative_pnl
+
+        每次买入/卖出后调用此方法，确保现金准确性不依赖顺序累加。
+
+        Returns:
+            偏差值（0 表示无偏差）。
+        """
+        expected = state.initial_capital - state.position.total_cost + state.cumulative_pnl
+        expected = round(expected, 2)
+        deviation = round(state.cash - expected, 2)
+        if abs(deviation) > 0.01:
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning(
+                f"现金偏差 {deviation:.2f}（预期 {expected:.2f}，"
+                f"实际 {state.cash:.2f}），已自动修正"
+            )
+            state.cash = expected
+        return deviation
 
     def append_trade(self, state: SimState, trade: TradeRecord) -> None:
         """追加交易记录到日志（最多保留 100 条）。"""

@@ -28,6 +28,7 @@ from simulation.framework.data import (
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework import sim_db
 
 from simulation.strategies.pair_trading.config import (
     PAIRS, INITIAL_CAPITAL, ZSCORE_PERIOD, ZSCORE_OPEN,
@@ -123,6 +124,25 @@ def build_report(report: dict) -> list[str]:
 
     lines.append(f"  ===========================================")
     return lines
+
+
+def _pair_write_snapshot(today_str, state, total_value):
+    """写入配对交易的每日资产快照。"""
+    try:
+        sim_db.record_account_daily({
+            "date": today_str,
+            "strategy": "pair_trading",
+            "strategy_name": "配对交易风格轮动模拟盘",
+            "cash": round(state.cash, 2),
+            "stock_value": round(total_value - state.cash, 2),
+            "total_value": round(total_value, 2),
+            "total_return": round((total_value / state.initial_capital - 1), 6)
+                if state.initial_capital > 0 else 0,
+            "position_symbol": state.position.symbol if state.position.shares > 0 else "",
+            "position_shares": state.position.shares,
+        })
+    except Exception:
+        logger.exception("写入每日快照失败")
 
 
 def run_sim_daily(
@@ -231,6 +251,7 @@ def run_sim_daily(
             report["action"] = "risk_pending"
         state_mgr.save(state)
         report["state"] = state
+        _pair_write_snapshot(today_str, state, total_value)
         return report
 
     # ── 平仓检查 |z| < close ──
@@ -249,6 +270,7 @@ def run_sim_daily(
             report["action"] = "close_pending"
             state_mgr.save(state)
             report["state"] = state
+            _pair_write_snapshot(today_str, state, total_value)
             return report
 
     # ── 开仓/切换信号 ──
@@ -275,6 +297,7 @@ def run_sim_daily(
 
     state_mgr.save(state)
     report["state"] = state
+    _pair_write_snapshot(today_str, state, total_value)
     return report
 
 
@@ -303,8 +326,39 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
         # 停牌/零成交量检查
         if today_data[sym].get("volume", 0) == 0:
             return None, {"type": "sell", "symbol": sym, "reason": f"{sym} 停牌/零成交量"}
+        # 保存持仓快照（broker.sell 会清空 position）
+        sell_snapshot = {
+            "symbol": sym, "shares": state.position.shares,
+            "avg_cost": state.position.avg_cost,
+            "total_cost": state.position.total_cost,
+            "hold_days": state.days_since_switch,
+            "buy_date": state.position.buy_date,
+        }
         result = broker.sell(state, today_data[sym]["open"], reason=order.get("reason", ""))
         if result.success:
+            # 记录已平仓交易
+            try:
+                cost = sell_snapshot["total_cost"]
+                sim_db.record_closed_trade({
+                    "strategy": "pair_trading",
+                    "symbol": sym,
+                    "etf_name": ETF_POOL.get(sym, sym[:4]),
+                    "action": "sell",
+                    "buy_date": sell_snapshot.get("buy_date", ""),
+                    "sell_date": today_str,
+                    "hold_days": sell_snapshot["hold_days"],
+                    "buy_price": sell_snapshot["avg_cost"],
+                    "sell_price": result.price,
+                    "shares": sell_snapshot["shares"],
+                    "total_cost": round(cost, 2),
+                    "net_revenue": round(cost + result.pnl, 2),
+                    "commission": result.commission,
+                    "pnl": round(result.pnl, 2),
+                    "pnl_pct": round(result.pnl / cost, 6) if cost > 0 else 0,
+                    "exit_reason": order.get("reason", ""),
+                })
+            except Exception:
+                logger.exception("记录已平仓交易失败")
             return {"type": "sell", "symbol": sym, "shares": result.shares,
                     "price": result.price, "pnl": result.pnl}, None
         return None, {"type": "sell", "symbol": sym, "reason": result.reason}
@@ -319,9 +373,40 @@ def _execute_order(action_type, order, state, today_data, broker, today_str):
             return None, {"type": "switch", "reason": f"{sell_sym} 停牌/零成交量"}
         if today_data[buy_sym].get("volume", 0) == 0:
             return None, {"type": "switch", "reason": f"{buy_sym} 停牌/零成交量"}
+        # 保存卖出快照（broker.sell 会清空 position）
+        sell_snapshot = {
+            "symbol": sell_sym, "shares": state.position.shares,
+            "avg_cost": state.position.avg_cost,
+            "total_cost": state.position.total_cost,
+            "hold_days": state.days_since_switch,
+            "buy_date": state.position.buy_date,
+        }
         sell_result = broker.sell(state, today_data[sell_sym]["open"], reason="切换卖出")
         if not sell_result.success:
             return None, {"type": "switch", "reason": f"卖出失败: {sell_result.reason}"}
+        # 记录已平仓交易（卖出部分）
+        try:
+            cost = sell_snapshot["total_cost"]
+            sim_db.record_closed_trade({
+                "strategy": "pair_trading",
+                "symbol": sell_sym,
+                "etf_name": ETF_POOL.get(sell_sym, sell_sym[:4]),
+                "action": "switch_sell",
+                "buy_date": sell_snapshot.get("buy_date", ""),
+                "sell_date": today_str,
+                "hold_days": sell_snapshot["hold_days"],
+                "buy_price": sell_snapshot["avg_cost"],
+                "sell_price": sell_result.price,
+                "shares": sell_snapshot["shares"],
+                "total_cost": round(cost, 2),
+                "net_revenue": round(cost + sell_result.pnl, 2),
+                "commission": sell_result.commission,
+                "pnl": round(sell_result.pnl, 2),
+                "pnl_pct": round(sell_result.pnl / cost, 6) if cost > 0 else 0,
+                "exit_reason": "切换",
+            })
+        except Exception:
+            logger.exception("记录已平仓交易失败")
         buy_result = broker.buy(state, buy_sym, today_data[buy_sym]["open"],
                                 reason="切换买入")
         state.days_since_switch = 0

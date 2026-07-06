@@ -20,6 +20,7 @@ from simulation.framework.state import StateManager
 from simulation.framework.data import is_trading_day
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework import sim_db
 
 from simulation.strategies.combined.config import (
     TOTAL_CAPITAL, MOMENTUM_PCT, PAIR_PCT,
@@ -137,6 +138,46 @@ def main():
     if combined_total > state.peak_value:
         state.peak_value = combined_total
     state_mgr.save(state)
+
+    # ── 写入每日快照（sim_trading.db） ──
+    try:
+        sim_db.record_account_daily({
+            "date": today_str,
+            "strategy": "combined",
+            "strategy_name": STRATEGY_NAME,
+            "cash": round(state.cash, 2),
+            "stock_value": 0.0,
+            "total_value": round(combined_total, 2),
+            "total_return": round(combined_return, 6),
+            "position_symbol": "",
+            "position_shares": 0,
+        })
+    except Exception:
+        logger.exception("写入组合快照失败")
+
+    # ── 写入 CSV 日志（供 summary.py 读取） ──
+    try:
+        # 提取子策略持仓符号（用于 CSV 显示）
+        hold_sym = ""
+        hold_shares = 0
+        if mom_raw:
+            pos = mom_raw.get("position", {})
+            hold_sym = pos.get("symbol", "")
+            hold_shares = pos.get("shares", 0)
+        report_for_csv = {
+            "date": today_str,
+            "action": "hold",
+            "state": state,
+            "total_value": combined_total,
+            "stock_value": combined_total - state.cash,
+            "hold_symbol": hold_sym,
+            "hold_shares": hold_shares,
+            "order_executed": None,
+            "order_blocked": None,
+        }
+        append_simulation_log("combined", STRATEGY_NAME, report_for_csv, ETF_NAMES)
+    except Exception:
+        logger.exception("写入组合策略CSV日志失败")
 
     # ── 统一格式报告 ──
     lines = []

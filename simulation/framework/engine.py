@@ -25,6 +25,8 @@ from .state import SimState, StateManager, PositionState
 from .broker import SimBroker
 from .risk import RiskResult, run_all_risk_checks
 
+from simulation.framework import sim_db
+
 logger = logging.getLogger(__name__)
 
 # ── 涨跌停限制（不同类型 ETF 不同） ──
@@ -228,6 +230,22 @@ class DailySimEngine:
                 report["action"] = "risk_pending"
             self.state_mgr.save(state)
             report["state"] = state
+            # 写入每日快照（风控触发时也有估值数据）
+            try:
+                sim_db.record_account_daily({
+                    "date": today_str,
+                    "strategy": self.state_mgr.strategy_name,
+                    "strategy_name": type(self).__name__,
+                    "cash": round(state.cash, 2),
+                    "stock_value": round(stock_value, 2),
+                    "total_value": round(total_value, 2),
+                    "total_return": round((total_value / state.initial_capital - 1), 6)
+                        if state.initial_capital > 0 else 0,
+                    "position_symbol": state.position.symbol if state.position.shares > 0 else "",
+                    "position_shares": state.position.shares,
+                })
+            except Exception:
+                logger.exception("写入每日快照失败")
             return report
 
         # ── 7. 计算信号 → 产生待执行订单（明日执行） ──
@@ -279,7 +297,64 @@ class DailySimEngine:
         # ── 8. 持久化状态 ──
         self.state_mgr.save(state)
         report["state"] = state
+
+        # ── 9. 写入每日资产快照（sim_trading.db） ──
+        try:
+            sim_db.record_account_daily({
+                "date": today_str,
+                "strategy": self.state_mgr.strategy_name,
+                "strategy_name": type(self).__name__,
+                "cash": round(state.cash, 2),
+                "stock_value": round(stock_value, 2),
+                "total_value": round(total_value, 2),
+                "total_return": round((total_value / state.initial_capital - 1), 6)
+                    if state.initial_capital > 0 else 0,
+                "position_symbol": state.position.symbol if state.position.shares > 0 else "",
+                "position_shares": state.position.shares,
+            })
+        except Exception:
+            logger.exception("写入每日快照失败")
+
         return report
+
+    # ── 待执行订单处理 ──
+
+    # ── 已平仓交易记录 ──
+
+    def _record_closed_trade(
+        self,
+        state: SimState,
+        order: dict,
+        snapshot: dict,
+        result,
+        today_str: str,
+    ) -> None:
+        """记录已平仓交易到 sim_trading.db。"""
+        try:
+            cost = snapshot.get("total_cost", 0)
+            pnl = getattr(result, "pnl", 0) if hasattr(result, "pnl") else result.get("pnl", 0)
+            trade_record = {
+                "strategy": self.state_mgr.strategy_name,
+                "symbol": snapshot.get("symbol", ""),
+                "etf_name": self.etf_pool.get(snapshot.get("symbol", ""),
+                                              snapshot.get("symbol", "")[:4]),
+                "action": order.get("action", "sell"),
+                "buy_date": snapshot.get("buy_date", ""),
+                "sell_date": today_str,
+                "hold_days": snapshot.get("hold_days", 0),
+                "buy_price": snapshot.get("avg_cost", 0),
+                "sell_price": getattr(result, "price", 0) if hasattr(result, "price") else result.get("price", 0),
+                "shares": snapshot.get("shares", 0),
+                "total_cost": round(cost, 2),
+                "net_revenue": round(cost + pnl, 2),
+                "commission": getattr(result, "commission", 0) if hasattr(result, "commission") else result.get("commission", 0),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl / cost, 6) if cost > 0 else 0,
+                "exit_reason": order.get("reason", ""),
+            }
+            sim_db.record_closed_trade(trade_record)
+        except Exception:
+            logger.exception("记录已平仓交易失败")
 
     # ── 待执行订单处理 ──
 
@@ -343,8 +418,18 @@ class DailySimEngine:
             blocked, reason = _check_limit_open(sym, open_px, pc)
             if blocked:
                 return None, {"type": "sell", "symbol": sym, "reason": reason}
+            # ── 保存持仓快照（broker.sell 会清空 position） ──
+            sell_snapshot = {
+                "symbol": sym,
+                "shares": state.position.shares,
+                "avg_cost": state.position.avg_cost,
+                "total_cost": state.position.total_cost,
+                "hold_days": state.days_since_switch,
+                "buy_date": state.position.buy_date,
+            }
             result = self.broker.sell(state, open_px, reason=order.get("reason", ""))
             if result.success:
+                self._record_closed_trade(state, order, sell_snapshot, result, today_str)
                 return {"type": "sell", "symbol": sym, "shares": result.shares,
                         "price": result.price, "pnl": result.pnl}, None
             return None, {"type": "sell", "symbol": sym, "reason": result.reason}
@@ -380,10 +465,23 @@ class DailySimEngine:
                     reasons.append(reason_buy)
                 return None, {"type": "switch", "reason": "；".join(reasons)}
 
+            # 保存卖出快照（broker.sell 会清空 position）
+            sell_snapshot = {
+                "symbol": sell_sym,
+                "shares": state.position.shares,
+                "avg_cost": state.position.avg_cost,
+                "total_cost": state.position.total_cost,
+                "hold_days": state.days_since_switch,
+                "buy_date": state.position.buy_date,
+            }
             # 卖旧
             sell_result = self.broker.sell(state, open_sell, reason="动量切换卖出")
             if not sell_result.success:
                 return None, {"type": "switch", "reason": f"卖出失败: {sell_result.reason}"}
+            # 记录已平仓交易（卖出部分）
+            self._record_closed_trade(state, {
+                "action": "switch_sell", "reason": "动量切换",
+            }, sell_snapshot, sell_result, today_str)
             # 买新
             buy_result = self.broker.buy(state, buy_sym, open_buy, reason="动量切换买入")
             state.days_since_switch = 0
