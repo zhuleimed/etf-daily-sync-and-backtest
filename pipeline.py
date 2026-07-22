@@ -180,6 +180,15 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
+    # ── 12. 市场宽度择时模拟盘（可选，宽度>70%动量+宽度<30%空仓） 🆕 ──
+    {
+        "id": "market_breadth",
+        "name": "市场宽度择时模拟盘",
+        "cmd": ["-m", "simulation.strategies.market_breadth.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
     # ── 7. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
     {
         "id": "combined",
