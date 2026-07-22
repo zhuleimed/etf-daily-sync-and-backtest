@@ -171,6 +171,15 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
+    # ── 11. 跨境轮动模拟盘（可选，A股+美股+港股三市场动量轮动） 🆕 ──
+    {
+        "id": "cross_border",
+        "name": "跨境轮动模拟盘",
+        "cmd": ["-m", "simulation.strategies.cross_border.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
     # ── 7. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
     {
         "id": "combined",
