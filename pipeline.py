@@ -179,49 +179,49 @@ STEPS: list[dict] = [
         "id": "dual_momentum",
         "name": "双动量",
         "cmd": ["-m", "simulation.strategies.dual_momentum.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "sortino_ranking",
         "name": "Sortino排名",
         "cmd": ["-m", "simulation.strategies.sortino_ranking.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "sharpe_ranking",
         "name": "Sharpe排名",
         "cmd": ["-m", "simulation.strategies.sharpe_ranking.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "median_momentum",
         "name": "中位数#2",
         "cmd": ["-m", "simulation.strategies.median_momentum.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "tail_risk",
         "name": "尾部风险轮动",
         "cmd": ["-m", "simulation.strategies.tail_risk.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "bollinger_reversion",
         "name": "布林带回归",
         "cmd": ["-m", "simulation.strategies.bollinger_reversion.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "spread_reversion",
         "name": "价差回归",
         "cmd": ["-m", "simulation.strategies.spread_reversion.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "volume_price",
         "name": "量价配合",
         "cmd": ["-m", "simulation.strategies.volume_price.daily"],
-        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": "candidate"
     },
     {
         "id": "gold_safe_haven",
@@ -281,8 +281,11 @@ def main():
         required = step.get("required", False)
         timeout = step.get("timeout", 0)
 
-        # ── 批量模式：动量类策略合并推送，跨境/黄金独立推送 ──
-        if step.get("batch"):
+        # ── 批量模式：动量类/候选类分别聚合，跨境/黄金独立推送 ──
+        batch_val = step.get("batch")
+        if batch_val == "candidate":
+            os.environ["BATCH_MODE"] = "candidate"
+        elif batch_val:
             os.environ["BATCH_MODE"] = "1"
         else:
             os.environ.pop("BATCH_MODE", None)
@@ -359,10 +362,11 @@ def main():
     status = "completed" if pipeline_ok else "failed"
     ps.finish(status)
 
-    # ── 推送批量聚合的动量类策略日报 ──
+    # ── 推送批量聚合日报（两条：原动量类 + 新候选类）──
     try:
-        from simulation.framework.notify import flush_batch_reports
+        from simulation.framework.notify import flush_batch_reports, flush_candidate_reports
         flush_batch_reports("动量类策略合集")
+        flush_candidate_reports("候选策略合集")
     except Exception as e:
         print(f"  ⚠ 推送批量日报异常: {e}")
 

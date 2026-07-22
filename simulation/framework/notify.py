@@ -21,6 +21,14 @@ load_dotenv()
 
 # 批量聚合用的临时文件
 _BATCH_FILE = Path(__file__).resolve().parent.parent.parent / "batch_reports.json"
+_BATCH_CANDIDATE_FILE = Path(__file__).resolve().parent.parent.parent / "batch_candidate_reports.json"
+
+def _get_batch_file():
+    """根据 BATCH_MODE 返回对应的批量文件路径。"""
+    mode = os.environ.get("BATCH_MODE", "")
+    if mode == "candidate":
+        return _BATCH_CANDIDATE_FILE
+    return _BATCH_FILE
 
 
 def _get_config() -> tuple[str, list[str]]:
@@ -63,9 +71,10 @@ def push_daily_report(
     当 BATCH_MODE=1 时，报告写入临时文件而非立即推送。
     """
     # ── 批量模式：收集到文件 ──
-    if os.environ.get("BATCH_MODE") == "1":
+    if os.environ.get("BATCH_MODE", "") in ("1", "candidate"):
+        bf = _get_batch_file()
         reports = []
-        if _BATCH_FILE.exists():
+        if bf.exists():
             try:
                 reports = json.loads(_BATCH_FILE.read_text(encoding="utf-8"))
             except Exception:
@@ -74,7 +83,7 @@ def push_daily_report(
             "name": strategy_name,
             "lines": report_lines,
         })
-        _BATCH_FILE.write_text(json.dumps(reports, ensure_ascii=False, indent=2))
+        bf.write_text(json.dumps(reports, ensure_ascii=False, indent=2))
         return True
 
     # ── 正常模式：立即推送 ──
@@ -84,18 +93,18 @@ def push_daily_report(
     return send_message(title, content)
 
 
-def flush_batch_reports(batch_label: str = "动量类策略合集") -> bool:
-    """将批量收集的日报合并为一条消息推送，然后清理临时文件。"""
-    if not _BATCH_FILE.exists():
+def _flush_batch_file(batch_file: Path, batch_label: str) -> bool:
+    """将指定批量文件的日报合并为一条消息推送，然后清理。"""
+    if not batch_file.exists():
         return False
 
     try:
-        reports = json.loads(_BATCH_FILE.read_text(encoding="utf-8"))
+        reports = json.loads(batch_file.read_text(encoding="utf-8"))
     except Exception:
         return False
 
     if not reports:
-        _BATCH_FILE.unlink(missing_ok=True)
+        batch_file.unlink(missing_ok=True)
         return False
 
     today = date.today().strftime("%Y-%m-%d")
@@ -105,7 +114,6 @@ def flush_batch_reports(batch_label: str = "动量类策略合集") -> bool:
         lines.append(f"▎{r['name']}")
         lines.append("─" * 35)
         for line in r["lines"]:
-            # 去掉每条子报告原有的标题行（避免重复）
             if not line.startswith("📊") and "日报" not in line:
                 lines.append(line)
         if i < len(reports) - 1:
@@ -113,10 +121,18 @@ def flush_batch_reports(batch_label: str = "动量类策略合集") -> bool:
 
     content = "\n".join(lines)
     result = send_message(f"📊 {batch_label} | {today}", content)
-
-    # 清理临时文件
-    _BATCH_FILE.unlink(missing_ok=True)
+    batch_file.unlink(missing_ok=True)
     return result
+
+
+def flush_batch_reports(batch_label: str = "动量类策略合集") -> bool:
+    """推送原有动量类批量报告。"""
+    return _flush_batch_file(_BATCH_FILE, batch_label)
+
+
+def flush_candidate_reports(batch_label: str = "候选策略合集") -> bool:
+    """推送新纳入候选策略的批量报告。"""
+    return _flush_batch_file(_BATCH_CANDIDATE_FILE, batch_label)
 
 
 def push_error_alert(strategy_name: str, error: str) -> bool:
