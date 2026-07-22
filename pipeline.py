@@ -162,6 +162,15 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
+    # ── 10. 黄金避险轮动模拟盘（可选，恐慌→黄金/正常→动量） 🆕 ──
+    {
+        "id": "gold_safe_haven",
+        "name": "黄金避险轮动模拟盘",
+        "cmd": ["-m", "simulation.strategies.gold_safe_haven.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
     # ── 7. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
     {
         "id": "combined",

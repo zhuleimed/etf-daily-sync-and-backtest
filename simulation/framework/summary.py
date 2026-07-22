@@ -28,6 +28,7 @@ _FALLBACK_NAMES: dict[str, str] = {
     "momentum_vol_filter": "波动率过滤",
     "pair_trading": "配对交易",
     "adaptive_rotation": "自适应轮动",
+    "gold_safe_haven": "黄金避险",
     "combined": "组合策略",
 }
 
