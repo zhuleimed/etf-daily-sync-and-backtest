@@ -173,6 +173,56 @@ STEPS: list[dict] = [
         "batch": True,
     },
     # ═══ 独立推送策略（不参与批量，各自单独推送） ═══
+    
+    # ═══ 新纳入: 机制独立于纯动量的候选策略 ═══
+    {
+        "id": "dual_momentum",
+        "name": "双动量",
+        "cmd": ["-m", "simulation.strategies.dual_momentum.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "sortino_ranking",
+        "name": "Sortino排名",
+        "cmd": ["-m", "simulation.strategies.sortino_ranking.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "sharpe_ranking",
+        "name": "Sharpe排名",
+        "cmd": ["-m", "simulation.strategies.sharpe_ranking.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "median_momentum",
+        "name": "中位数#2",
+        "cmd": ["-m", "simulation.strategies.median_momentum.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "tail_risk",
+        "name": "尾部风险轮动",
+        "cmd": ["-m", "simulation.strategies.tail_risk.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "bollinger_reversion",
+        "name": "布林带回归",
+        "cmd": ["-m", "simulation.strategies.bollinger_reversion.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "spread_reversion",
+        "name": "价差回归",
+        "cmd": ["-m", "simulation.strategies.spread_reversion.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
+    {
+        "id": "volume_price",
+        "name": "量价配合",
+        "cmd": ["-m", "simulation.strategies.volume_price.daily"],
+        "cwd": str(PROJECT_DIR), "required": False, "timeout": 600, "batch": True,
+    },
     {
         "id": "gold_safe_haven",
         "name": "黄金避险轮动 🥇",
