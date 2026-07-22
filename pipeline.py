@@ -189,6 +189,15 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
+    # ── 13. HS300均线择时模拟盘（可选，HS300>MA10动量+<MA10空仓） 🆕🏆 ──
+    {
+        "id": "hs300_ma_timing",
+        "name": "HS300均线择时模拟盘",
+        "cmd": ["-m", "simulation.strategies.hs300_ma_timing.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
     # ── 7. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
     {
         "id": "combined",

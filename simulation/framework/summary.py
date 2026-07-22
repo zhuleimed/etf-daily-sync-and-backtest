@@ -31,6 +31,7 @@ _FALLBACK_NAMES: dict[str, str] = {
     "gold_safe_haven": "黄金避险",
     "cross_border": "跨境轮动",
     "market_breadth": "市场宽度择时",
+    "hs300_ma_timing": "HS300均线择时",
     "combined": "组合策略",
 }
 
