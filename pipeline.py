@@ -88,124 +88,106 @@ STEPS: list[dict] = [
         "cmd": ["main.py", "--sync-only"],
         "cwd": str(PROJECT_DIR),
         "required": True,
-        "timeout": 10800,  # 3h
+        "timeout": 10800,
     },
-    # ── 2. 动量轮动模拟盘（必需） ──
+    # ═══ 动量类策略（批量推送，BATCH_MODE=1） ═══
     {
         "id": "momentum_rotation",
-        "name": "动量轮动模拟盘",
+        "name": "动量轮动",
         "cmd": ["-m", "simulation.strategies.momentum_rotation.daily"],
         "cwd": str(PROJECT_DIR),
         "required": True,
-        "timeout": 600,  # 10min
+        "timeout": 600,
+        "batch": True,
     },
-    # ── 3. 复合动量模拟盘（可选，多因子复合打分） ──
     {
         "id": "composite_momentum",
-        "name": "复合动量模拟盘",
+        "name": "复合动量",
         "cmd": ["-m", "simulation.strategies.composite_momentum.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 4. MACD趋势轮动模拟盘（可选，EMA交叉+加速度） ──
     {
         "id": "macd_trend_rotation",
-        "name": "MACD趋势轮动模拟盘",
+        "name": "MACD趋势轮动",
         "cmd": ["-m", "simulation.strategies.macd_trend_rotation.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 5. RSI趋势确认模拟盘（可选，RSI>50多头过滤） ──
     {
         "id": "rsi_trend_rotation",
-        "name": "RSI趋势确认模拟盘",
+        "name": "RSI趋势确认",
         "cmd": ["-m", "simulation.strategies.rsi_trend_rotation.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 6. 自适应轮动模拟盘（可选，牛市动量+震荡均值回归） 🆕 ──
     {
         "id": "adaptive_rotation",
-        "name": "自适应轮动模拟盘",
+        "name": "自适应轮动",
         "cmd": ["-m", "simulation.strategies.adaptive_rotation.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 6. ADX趋势强度模拟盘（可选，ADX≥25趋势过滤） ──
     {
         "id": "adx_trend_rotation",
-        "name": "ADX趋势强度模拟盘",
+        "name": "ADX趋势强度",
         "cmd": ["-m", "simulation.strategies.adx_trend_rotation.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 5. 波动率过滤模拟盘（可选） ──
     {
         "id": "momentum_vol_filter",
-        "name": "波动率过滤模拟盘",
+        "name": "波动率过滤",
         "cmd": ["-m", "simulation.strategies.momentum_vol_filter.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 6. 配对交易风格轮动模拟盘（可选） ──
     {
         "id": "pair_trading",
-        "name": "配对交易风格轮动模拟盘",
+        "name": "配对交易风格轮动",
         "cmd": ["-m", "simulation.strategies.pair_trading.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
+        "batch": True,
     },
-    # ── 10. 黄金避险轮动模拟盘（可选，恐慌→黄金/正常→动量） 🆕 ──
+    {
+        "id": "combined",
+        "name": "组合策略(动量80%+配对20%)",
+        "cmd": ["-m", "simulation.strategies.combined.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 300,
+        "batch": True,
+    },
+    # ═══ 独立推送策略（不参与批量，各自单独推送） ═══
     {
         "id": "gold_safe_haven",
-        "name": "黄金避险轮动模拟盘",
+        "name": "黄金避险轮动 🥇",
         "cmd": ["-m", "simulation.strategies.gold_safe_haven.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
     },
-    # ── 11. 跨境轮动模拟盘（可选，A股+美股+港股三市场动量轮动） 🆕 ──
     {
         "id": "cross_border",
-        "name": "跨境轮动模拟盘",
+        "name": "跨境轮动 🌏",
         "cmd": ["-m", "simulation.strategies.cross_border.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
         "timeout": 600,
-    },
-    # ── 12. 市场宽度择时模拟盘（可选，宽度>70%动量+宽度<30%空仓） 🆕 ──
-    {
-        "id": "market_breadth",
-        "name": "市场宽度择时模拟盘",
-        "cmd": ["-m", "simulation.strategies.market_breadth.daily"],
-        "cwd": str(PROJECT_DIR),
-        "required": False,
-        "timeout": 600,
-    },
-    # ── 13. HS300均线择时模拟盘（可选，HS300>MA10动量+<MA10空仓） 🆕🏆 ──
-    {
-        "id": "hs300_ma_timing",
-        "name": "HS300均线择时模拟盘",
-        "cmd": ["-m", "simulation.strategies.hs300_ma_timing.daily"],
-        "cwd": str(PROJECT_DIR),
-        "required": False,
-        "timeout": 600,
-    },
-    # ── 7. 组合策略模拟盘（可选，需前两者状态文件就绪） ──
-    {
-        "id": "combined",
-        "name": "组合策略模拟盘(动量80%+配对20%)",
-        "cmd": ["-m", "simulation.strategies.combined.daily"],
-        "cwd": str(PROJECT_DIR),
-        "required": False,
-        "timeout": 300,
     },
 ]
 
@@ -248,6 +230,12 @@ def main():
         sname = step["name"]
         required = step.get("required", False)
         timeout = step.get("timeout", 0)
+
+        # ── 批量模式：动量类策略合并推送，跨境/黄金独立推送 ──
+        if step.get("batch"):
+            os.environ["BATCH_MODE"] = "1"
+        else:
+            os.environ.pop("BATCH_MODE", None)
 
         print(f"\n  ▶ {sname}...")
         ps.start_step(sid)
@@ -321,6 +309,13 @@ def main():
     status = "completed" if pipeline_ok else "failed"
     ps.finish(status)
 
+    # ── 推送批量聚合的动量类策略日报 ──
+    try:
+        from simulation.framework.notify import flush_batch_reports
+        flush_batch_reports("动量类策略合集")
+    except Exception as e:
+        print(f"  ⚠ 推送批量日报异常: {e}")
+
     # 推送管线汇总
     try:
         push_pipeline_summary(ps.to_dict(), send_message)
@@ -334,6 +329,9 @@ def main():
         push_strategy_summary(output_dir, send_message, pipeline_info=pinfo)
     except Exception as e:
         print(f"  ⚠ 推送策略汇总异常: {e}")
+
+    # 清理环境变量
+    os.environ.pop("BATCH_MODE", None)
 
     print(f"\n  {'=' * 55}")
     print(f"  管线状态: {status}")
