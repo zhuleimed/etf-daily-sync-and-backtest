@@ -29,6 +29,7 @@ from simulation.framework.data import (
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.report_builder import build_signal_report
 
 from simulation.strategies.rsi_trend_rotation.config import (
     ETF_POOL, ETF_SYMBOLS, MOMENTUM_WINDOW, MIN_SWITCH_CONVICTION,
@@ -236,7 +237,7 @@ def main():
     # 记录模拟盘日志
     append_simulation_log("rsi_trend_rotation", STRATEGY_NAME, report, ETF_POOL)
 
-    report_lines = build_report(report)
+    report_lines = build_signal_report(report, STRATEGY_NAME, ETF_POOL)
     for line in report_lines:
         logger.info(line)
     push_daily_report(STRATEGY_NAME, report_lines)

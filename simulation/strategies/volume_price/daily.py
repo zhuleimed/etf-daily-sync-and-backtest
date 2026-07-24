@@ -11,6 +11,7 @@ from simulation.framework.engine import DailySimEngine
 from simulation.framework.data import load_latest_data, get_latest_trading_day, is_trading_day
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.report_builder import build_signal_report
 from simulation.strategies.volume_price.config import *
 from strategies.momentum_rotation.momentum_signals import compute_momentum_signals, rank_etfs_by_momentum
 logger = logging.getLogger("volume_price")
@@ -42,7 +43,7 @@ def main():
     report = engine.run_daily(etf_data, today_idx, today_str)
     if "error" in report: push_error_alert(SNAME, report["error"]); return
     append_simulation_log("volume_price", SNAME, report, ETF_POOL)
-    lines = [f"{SNAME} | {today_str}", f"操作: {report.get('action','?')}", f"总资产: {report.get('total_value',0):.0f}"]
+    lines = build_signal_report(report, SNAME, ETF_POOL)
     push_daily_report(SNAME, lines)
     logger.info(f"{SNAME} 完成")
 

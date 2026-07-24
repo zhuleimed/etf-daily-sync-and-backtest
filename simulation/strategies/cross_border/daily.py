@@ -28,6 +28,7 @@ from simulation.framework.data import (
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.report_builder import build_signal_report
 
 from simulation.strategies.cross_border.config import (
     ETF_POOL,
@@ -238,7 +239,7 @@ def main():
     append_simulation_log("cross_border", STRATEGY_NAME, report, ETF_POOL)
 
     # 7. 推送日报
-    report_lines = build_report(report)
+    report_lines = build_signal_report(report, STRATEGY_NAME, ETF_POOL)
     for line in report_lines:
         logger.info(line)
     push_daily_report(STRATEGY_NAME, report_lines)

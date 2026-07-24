@@ -179,21 +179,23 @@ def main():
     except Exception:
         logger.exception("写入组合策略CSV日志失败")
 
-    # ── 统一格式报告 ──
+    # ── 统一格式报告（T+1 两板块：子策略信号 + 组合日结） ──
     lines = []
     lines.append("")
     lines.append("  ===========================================")
     lines.append(f"  {STRATEGY_NAME} | {today_str}")
     lines.append(f"  ===========================================")
 
-    lines.append(f"  >> 今日子策略信号")
+    lines.append("")
+    lines.append("  ── 今日子策略信号（明日开盘执行）──")
     lines.append(f"      动量轮动({MOMENTUM_PCT:.0%}): {mom_signal}")
     lines.append(f"      持仓: {mom_hold}")
     lines.append(f"      配对交易({PAIR_PCT:.0%}): {pair_signal}")
     lines.append(f"      持仓: {pair_hold}")
 
-    lines.append(f"  -------------------------------------------")
-    lines.append(f"  组合日结")
+    lines.append("")
+    lines.append("  -------------------------------------------")
+    lines.append("  组合日结")
     mom_display = mom_alloc * (1 + mom_return)
     pair_display = pair_alloc * (1 + pair_return)
     lines.append(f"    动量(80%): {mom_display:>8.2f}  ({mom_return*100:+7.2f}%)")

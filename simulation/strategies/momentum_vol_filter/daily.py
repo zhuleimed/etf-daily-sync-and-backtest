@@ -29,6 +29,7 @@ from simulation.framework.data import (
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.report_builder import build_signal_report
 
 from simulation.strategies.momentum_vol_filter.config import (
     ETF_POOL, ETF_SYMBOLS, INITIAL_CAPITAL, MOMENTUM_WINDOW,
@@ -182,7 +183,7 @@ def main():
             report["action"] = "vol_filter_pending"
             report["risk"] = {"triggered": True, "reason": f"高波动清仓(年化>{VOL_THRESHOLD*100:.0f}%)"}
 
-    report_lines = build_report(report)
+    report_lines = build_signal_report(report, STRATEGY_NAME, ETF_POOL)
     for line in report_lines:
         logger.info(line)
     push_daily_report(STRATEGY_NAME, report_lines)

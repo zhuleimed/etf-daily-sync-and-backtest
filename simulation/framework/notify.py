@@ -76,7 +76,7 @@ def push_daily_report(
         reports = []
         if bf.exists():
             try:
-                reports = json.loads(_BATCH_FILE.read_text(encoding="utf-8"))
+                reports = json.loads(bf.read_text(encoding="utf-8"))
             except Exception:
                 reports = []
         reports.append({
@@ -108,11 +108,10 @@ def _flush_batch_file(batch_file: Path, batch_label: str) -> bool:
         return False
 
     today = date.today().strftime("%Y-%m-%d")
-    lines = [f"📊 {batch_label} | {today}", "═" * 40, ""]
+    lines = [f"📊 {batch_label} | {today}", ""]
 
     for i, r in enumerate(reports):
         lines.append(f"▎{r['name']}")
-        lines.append("─" * 35)
         for line in r["lines"]:
             if not line.startswith("📊") and "日报" not in line:
                 lines.append(line)

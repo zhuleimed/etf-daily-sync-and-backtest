@@ -59,58 +59,61 @@ logger = logging.getLogger("gold_safe_haven_sim")
 # ============================================================================
 
 def build_report(report: dict) -> list[str]:
-    """生成微信推送日报。"""
+    """生成微信推送日报（T+1 三板块：昨信号执行 + 今日新信号 + 账户日结）。"""
     state = report.get("state")
     lines = []
+    mode = report.get("mode", "?")
 
     def name_of(sym):
         return f"{ETF_POOL.get(sym, sym[:4])}({sym})"
 
-    lines.append("")
-    lines.append("  ═══════════════════════════════════════════")
-    lines.append(f"  {STRATEGY_NAME} | {report.get('date', '')}")
-    lines.append(f"  ═══════════════════════════════════════════")
+    lines.append(f"  {STRATEGY_NAME}  |  {report.get('date', '')}")
 
-    # 今日信号
+    # ═══ 昨信号执行 ═══
     execd = report.get("order_executed")
     blocked = report.get("order_blocked")
-    risk = report.get("risk")
-    has_signal = False
+
+    lines.append("")
+    lines.append("【昨信号执行】")
 
     if execd:
         t = execd.get("type", "")
         if t == "buy":
-            lines.append(f"  >> 今日信号: 买入 {name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f}")
+            lines.append(f"  >> 开仓: 开盘买入 {name_of(execd['symbol'])} {execd['shares']}股 @ {execd['price']:.4f}")
         elif t == "sell":
-            lines.append(f"  >> 今日信号: 卖出 {name_of(execd['symbol'])} {execd['shares']}股 盈亏{execd.get('pnl', 0):+.2f}")
+            lines.append(f"  >> 平仓: 开盘卖出 {name_of(execd['symbol'])} {execd['shares']}股 盈亏{execd.get('pnl', 0):+.2f}")
         elif t == "switch":
             s = execd.get("sell", {}); b = execd.get("buy", {})
-            lines.append(f"  >> 今日信号: 切换 {name_of(s.get('symbol',''))} -> {name_of(b.get('symbol',''))}")
-        lines.append(f"      原因: {execd.get('reason', '')}")
-        has_signal = True
-
-    if blocked:
+            lines.append(f"  >> 切换: 开盘卖出 {name_of(s.get('symbol',''))} → 买入 {name_of(b.get('symbol',''))}")
+    elif blocked:
         lines.append(f"  >> 订单取消: {blocked.get('reason', '')}")
-        has_signal = True
+    else:
+        lines.append("  >> 无昨日待执行信号")
 
-    if state and state.pending_order:
+    # ═══ 今日新信号（明日开盘执行） ═══
+    risk = report.get("risk")
+    lines.append("")
+    lines.append(f"【今日新信号（明日开盘执行）】[mode={mode}]")
+
+    if risk and risk.get("triggered"):
+        lines.append(f"  >> ⚠ {risk['reason']}")
+    elif state and state.pending_order:
         po = state.pending_order
         pa = po.get("action", "?")
-        mode_tag = f"[{report.get('mode','?')}] "
         if pa == "buy":
-            lines.append(f"  >> {mode_tag}买入信号 {name_of(po['symbol'])}（明日执行）")
+            lines.append(f"  >> 买入信号: {name_of(po['symbol'])}（明日开盘执行）")
         elif pa == "sell":
-            lines.append(f"  >> {mode_tag}卖出信号 {name_of(po['symbol'])}（明日执行）")
+            lines.append(f"  >> 卖出信号: {name_of(po['symbol'])}（明日开盘执行）")
         elif pa == "switch":
-            lines.append(f"  >> {mode_tag}切换 {name_of(po['sell_symbol'])} → {name_of(po['buy_symbol'])}（明日执行）")
+            lines.append(f"  >> 切换信号: {name_of(po['sell_symbol'])} → {name_of(po['buy_symbol'])}（明日开盘执行）")
         lines.append(f"      原因: {po.get('reason', '')}")
-        has_signal = True
-
-    if not has_signal:
+    else:
         h = ""
         if state and state.position.shares > 0:
             h = name_of(state.position.symbol)
-        lines.append(f"  >> 今日信号: 持有 {h} [{report.get('mode', '?')}]")
+            lines.append(f"  >> 持有 {h}，无切换需求")
+        else:
+            lines.append("  >> 无持仓，无买入信号")
 
     # panic指标
     panic_info = report.get("panic_info", {})
@@ -130,9 +133,9 @@ def build_report(report: dict) -> list[str]:
         if rank_parts:
             lines.append(f"      动量排名: {' > '.join(rank_parts)}")
 
-    # 账户日结
-    lines.append(f"  ───────────────────────────────────────────")
-    lines.append(f"  账户日结")
+    # ═══ 账户日结 ═══
+    lines.append("")
+    lines.append("【账户日结】")
     if state:
         pos = state.position
         if pos and pos.shares > 0:
@@ -140,14 +143,13 @@ def build_report(report: dict) -> list[str]:
             lines.append(f"    持仓: {name_of(pos.symbol)} {pos.shares}股  均价{pos.avg_cost:.4f}")
             lines.append(f"    市值: {stock_val:>8.2f}")
         else:
-            lines.append(f"    持仓: 空仓")
+            lines.append("    持仓: 空仓")
         lines.append(f"    现金: {state.cash:>8.2f}")
         total_value = report.get("total_value", 0)
         if state.initial_capital > 0:
             total_return = (total_value / state.initial_capital - 1) * 100
             lines.append(f"    总资产: {total_value:>8.2f}  总收益率: {total_return:+8.2f}%")
 
-    lines.append(f"  ═══════════════════════════════════════════")
     return lines
 
 
