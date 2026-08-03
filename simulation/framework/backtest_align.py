@@ -49,19 +49,28 @@ OUTPUT_DIR = PROJECT_ROOT / "simulation" / "output"
 PREWARM_DAYS = 45  # 回测预热交易日数（保证动量/指标充分计算）
 
 
-def load_sim_series(sid: str) -> tuple[list[str], list[float]]:
-    """读取模拟盘 CSV，返回 (日期列表, 累计收益率%列表)。
+def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None]:
+    """读取模拟盘 CSV，返回 (日期列表, 累计收益率%列表, 对齐锚点日期)。
 
-    跳过"历史起点"追记行（其日期可能为空），只取真实交易日记录。
+    处理三类特殊情况：
+      1. "历史起点"追记行（日期可能为空）——跳过
+      2. "框架重构"注释行（收益序列断裂点）——跳过
+      3. 收益重置跳变：累计收益率从明显亏损(< -5%)跳回≈0（如2026-07-03
+         框架v2重构），从最后一个跳变点起重新锚定——重置后收益相对新起点
+         累计，与回测对齐时参照系必须一致（否则产生系统性假偏差）。
     """
     path = OUTPUT_DIR / f"sim_log_{sid}.csv"
     if not path.exists():
-        return [], []
+        return [], [], None
     df = pd.read_csv(path)
-    dates, rets = [], []
+    dates, rets, reset_markers = [], [], []
     for _, row in df.iterrows():
         d = str(row.get("日期", "")).strip()
-        if not d or "历史起点" in d:
+        op = str(row.get("操作", "")).strip()
+        # 记录"框架重构"注释行日期（收益序列断裂点，优先用于锚定）
+        if "重构" in op and d:
+            reset_markers.append(d[:10])
+        if not d or "历史起点" in d or "重构" in op:
             continue
         # 累计收益率形如 "-10.82%"；空值跳过
         r = str(row.get("累计收益率", "")).strip().replace("%", "")
@@ -72,7 +81,27 @@ def load_sim_series(sid: str) -> tuple[list[str], list[float]]:
         except ValueError:
             continue
         dates.append(d[:10])  # 去掉可能的"←历史起点"后缀
-    return dates, rets
+
+    # 锚点确定（优先可靠信号，跳变检测兜底）：
+    # 1. 存在"框架重构"注释行 → 取最后一个重构行日期起（含同日真实行）
+    #    重构后收益相对新起点累计，参照系必须与回测一致
+    # 2. 无注释行时检测收益跳变：ret 从 < -5% 跳回 |ret| < 0.5%（手动重置）
+    anchor_idx = 0
+    if reset_markers:
+        last_reset = reset_markers[-1]
+        for i, d in enumerate(dates):
+            if d >= last_reset:
+                anchor_idx = i
+                break
+    else:
+        for i in range(1, len(rets)):
+            if rets[i - 1] < -5 and abs(rets[i]) < 0.5 and (rets[i] - rets[i - 1]) > 5:
+                anchor_idx = i
+    if anchor_idx > 0:
+        print(f"  ℹ {sid}: 检测到收益重置点（{dates[anchor_idx]}），从重置后对齐"
+              f"（{anchor_idx}行重置前历史不参与）")
+    anchor = dates[anchor_idx] if dates else None
+    return dates[anchor_idx:], rets[anchor_idx:], anchor
 
 
 def get_prewarm_start(anchor_date: str, n: int = PREWARM_DAYS) -> str:
@@ -170,15 +199,17 @@ def report(sid: str, records: list[dict], threshold: float, push: bool) -> bool:
     if over:
         print(f"  ⚠ 超阈值({threshold*100:.0f}pp) {len(over)}天: {[r['date'] for r in over[:8]]}")
         if push:
-            from simulation.framework.notify import push_error_alert
+            # 用 send_message 而非 push_error_alert：后者会标"运行异常"标题
+            from simulation.framework.notify import send_message
+            today = date.today().strftime("%Y-%m-%d")
             lines = [
-                f"【轨迹对齐告警】{sid}",
+                f"⚠️ 轨迹对齐告警 {sid} | {today}",
                 f"模拟盘 {last['sim_ret']:+.2f}% vs 回测 {last['back_ret']:+.2f}%",
                 f"当前偏差 {last['dev']:+.2f}pp，最大 {max_dev['dev']:+.2f}pp ({max_dev['date']})",
                 f"超阈值天数: {len(over)}",
                 "提示：检查模拟盘日志与回测轨迹，判断是逻辑bug还是市场异常",
             ]
-            push_error_alert(f"对齐监控-{sid}", "\n".join(lines))
+            send_message(f"⚠️ 轨迹对齐告警-{sid}", "\n".join(lines))
         return True
     print(f"  偏差在阈值内 ✅")
     return False
@@ -200,12 +231,12 @@ def main():
 
     any_alert = False
     for sid in strategies:
-        sim_dates, sim_rets = load_sim_series(sid)
-        if not sim_dates:
+        sim_dates, sim_rets, anchor = load_sim_series(sid)
+        if not sim_dates or anchor is None:
             print(f"  ⚠ {sid}: 无模拟盘记录，跳过")
             continue
-        start = get_prewarm_start(sim_dates[0])
-        print(f"\n  ▶ {sid}: 模拟盘起点 {sim_dates[0]} → 回测 {start}~{latest}")
+        start = get_prewarm_start(anchor)
+        print(f"\n  ▶ {sid}: 锚点 {anchor} → 回测 {start}~{latest}")
         back_df = run_backtest(sid, start, latest, f"align_{sid}")
         if back_df is None:
             continue
@@ -213,8 +244,9 @@ def main():
         if report(sid, records, args.threshold, args.push):
             any_alert = True
 
-    print(f"\n完成：{'存在超阈值偏差 ⚠' if any_alert else '全部在阈值内 ✅'}")
-    sys.exit(1 if any_alert else 0)
+    # 有告警也正常退出：告警已通过微信推送，监控步骤本身"完成"
+    print(f"\n完成：{'存在超阈值偏差 ⚠（已推送告警）' if any_alert else '全部在阈值内 ✅'}")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
