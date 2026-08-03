@@ -1677,8 +1677,12 @@ pip install pandas numpy matplotlib pydantic-settings \
 | B008 | 候选策略批量文件混入动量策略 | 🔴 | 2026-07-24 | `notify.py:79` `_BATCH_FILE`→`bf` |
 | B009 | 引擎跳过当日信号计算（order_executed时） | 🟡 | 2026-07-24 | 信号始终计算，pending_order单独守卫 |
 | B010 | 批量日报横线截断标题 | 🟡 | 2026-07-24 | 删除 `notify.py` 批量包装层横线 |
+| B011 | 模拟盘无"持仓信号消失→卖出"逻辑（回测有） | 🔴 | 2026-08-03 | `DailySimEngine(exit_when_signal_dead=True)` |
+| B012 | RSI模拟盘切换阈值错配（绝对1.0 vs 回测2.0×σ） | 🔴 | 2026-08-03 | `switch_threshold_func` 用回测同款相对阈值 |
+| B013 | RSI模拟盘lookback=80信号漂移 | 🟡 | 2026-08-03 | lookback 80→250（Wilder递推收敛） |
 
 > 详细修复过程见 `OPTIMIZATION_HISTORY.md` 第 1 节。B008-B010 详见 [[daily-report-t1-format]]。
+> B011-B013 详见 2026-08-03 排查记录（模拟盘7月全面亏损：市场暴跌主因+引擎对齐修复）。
 
 ---
 

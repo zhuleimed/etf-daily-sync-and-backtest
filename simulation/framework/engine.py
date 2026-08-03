@@ -89,6 +89,8 @@ class DailySimEngine:
         profit_threshold: float = 0.10,
         drawback_pct: float = 0.05,
         drawdown_threshold: float = 0.15,
+        exit_when_signal_dead: bool = False,
+        switch_threshold_func: Optional[Callable] = None,
     ):
         self.state_mgr = state_mgr
         self.broker = broker
@@ -100,6 +102,12 @@ class DailySimEngine:
         self.min_switch_conviction = min_switch_conviction
         self.min_hold_days = min_hold_days
         self.risk_mode = risk_mode
+        # 持仓信号消失即卖出（与回测引擎"持仓得分归零→平仓"行为对齐，
+        # 2026-08-03 新增：RSI 等策略启用，修复模拟盘不回测不一致）
+        self.exit_when_signal_dead = exit_when_signal_dead
+        # 自定义切换阈值函数（momentum, target, current)->float，
+        # None=用绝对差 min_switch_conviction（默认行为不变）
+        self.switch_threshold_func = switch_threshold_func
         self.stop_loss_pct = stop_loss_pct
         self.profit_threshold = profit_threshold
         self.drawback_pct = drawback_pct
@@ -260,8 +268,20 @@ class DailySimEngine:
 
         # ── 计算信号动作（供日报展示），但不一定产生 pending_order ──
         has_position = state.position.shares > 0
+        current_mom = momentum.get(hold_sym, float("nan")) if has_position else float("nan")
 
-        if not has_position:
+        # ── 持仓信号消失 → 卖出（可选模式 exit_when_signal_dead）──
+        # 与回测引擎"持仓得分归零→平仓"行为对齐；不受 min_hold 限制（同回测）。
+        # RSI 等策略启用：2026-07 模拟盘教训——持仓得分归零时模拟盘只"持有"，
+        # 回测却已平仓避险，导致模拟盘多亏 8~10pp。
+        if has_position and self.exit_when_signal_dead and (
+            pd.isna(current_mom) or current_mom <= 0
+        ):
+            report["signal"] = "exit_pending"
+            report["signal_note"] = "持仓信号消失（得分≤0），明日卖出"
+            report["signal_target"] = hold_sym
+
+        elif not has_position:
             if target_etf is not None and not pd.isna(target_mom) and target_mom > 0:
                 report["signal"] = "open_pending"
                 report["signal_target"] = target_etf
@@ -270,7 +290,7 @@ class DailySimEngine:
 
         elif state.days_since_switch < self.min_hold_days:
             # min_hold 期内：不产生切换 pending_order，但信号本身有效
-            # 卖出信号（风控触发）不受 min_hold 限制，已在第6步处理
+            # 卖出信号（风控触发/信号消失）不受 min_hold 限制
             report["signal"] = "hold"
             report["signal_note"] = f"min_hold={self.min_hold_days}天（已持{state.days_since_switch}天）"
 
@@ -278,10 +298,14 @@ class DailySimEngine:
             report["signal"] = "hold"
 
         elif hold_sym in today_data:
-            current_mom = momentum.get(hold_sym, float("nan"))
             if not pd.isna(current_mom) and not pd.isna(target_mom):
+                # 切换阈值：默认绝对差；可自定义（RSI 用 2.0×截面标准差，与回测一致）
+                if self.switch_threshold_func is not None:
+                    threshold = self.switch_threshold_func(momentum, target_etf, hold_sym)
+                else:
+                    threshold = self.min_switch_conviction
                 excess = target_mom - current_mom
-                if excess > self.min_switch_conviction:
+                if excess > threshold:
                     report["signal"] = "switch_pending"
                     report["signal_target"] = target_etf
                 else:
@@ -308,6 +332,11 @@ class DailySimEngine:
                 state.pending_order = {
                     "action": "switch", "sell_symbol": hold_sym,
                     "buy_symbol": target_etf, "reason": "动量切换", "created": today_str,
+                }
+            elif signal == "exit_pending":
+                state.pending_order = {
+                    "action": "sell", "symbol": hold_sym,
+                    "reason": "持仓信号消失", "created": today_str,
                 }
         # 当 can_create_pending=False 时：
         #   - 信号已计算（report["signal"]）供日报展示

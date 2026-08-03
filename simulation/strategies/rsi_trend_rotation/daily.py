@@ -39,8 +39,9 @@ from simulation.strategies.rsi_trend_rotation.config import (
 )
 
 from strategies.rsi_trend_rotation.momentum_signals import (
-    compute_rsi_scores, rank_etfs_by_rsi,
+    compute_rsi_scores, rank_etfs_by_rsi, compute_rsi_spread,
 )
+from strategies.rsi_trend_rotation.config import SWITCH_CONVICTION_STD
 
 logger = logging.getLogger("rsi_trend_sim")
 
@@ -57,7 +58,8 @@ def compute_rsi_signals(
 def load_etf_data_with_buffer(
     symbols: list[str],
     db_path: str | Path = DB_PATH,
-    lookback_days: int = 80,            # RSI需要约14+5+缓冲
+    lookback_days: int = 250,           # RSI Wilder递推需足够历史收敛（80天时信号漂移，
+                                        # 7-03信号日rank#1从510500漂移为512100；250天与回测接近）
     momentum_window: int = MOMENTUM_WINDOW,
 ) -> dict[str, pd.DataFrame]:
     """加载ETF数据（RSI需要足够的历史数据）。"""
@@ -185,8 +187,8 @@ def main():
         push_error_alert(STRATEGY_NAME, msg)
         return
 
-    # RSI需要足够的历史数据（14×2+缓冲）
-    lookback = 80
+    # RSI需要足够的历史数据（Wilder递推收敛，80天会信号漂移）
+    lookback = 250
     etf_data = load_etf_data_with_buffer(ETF_SYMBOLS, DB_PATH, lookback_days=lookback)
     if not etf_data:
         msg = "行情数据加载失败"
@@ -225,6 +227,13 @@ def main():
         profit_threshold=PROFIT_THRESHOLD,
         drawback_pct=DRAWBACK_PCT,
         drawdown_threshold=DRAWDOWN_THRESHOLD,
+        # ── 与回测引擎行为对齐（2026-08-03 新增）──
+        # 1. 持仓 RSI 得分归零 → 明日卖出（回测同款"信号消失平仓"）
+        # 2. 切换阈值改用回测同款判据：得分差 > 2.0×截面标准差（非固定绝对差1.0）
+        exit_when_signal_dead=True,
+        switch_threshold_func=(
+            lambda m, t, c: max(compute_rsi_spread(m) * SWITCH_CONVICTION_STD, 0.1)
+        ),
     )
 
     report = engine.run_daily(etf_data, today_idx, today_str)

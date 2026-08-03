@@ -199,6 +199,30 @@ def compute_rsi_scores(
         # ── Total Score ──
         total = regime_score + persistence_score + slope_score
 
+        # ── 暴跌切换保护：趋势已破坏的ETF得分归零 ──
+        # 防止"暴跌后反弹"被 RSI 误判为趋势启动而追高（2026-07 RSI 模拟盘教训：
+        # 科创50暴跌后单日反弹+11%时追高，随后再跌14%被二次埋）。
+        # 判定条件（两者独立触发）：
+        #   1. 窗口内出现单日暴跌（CRASH_GUARD_MAX_DAILY_DROP）
+        #   2. 距近N日高点的回撤过深（CRASH_GUARD_MAX_DRAWDOWN）——趋势已破坏
+        #      （7-21反弹时距10日高点仍-13.4%，反弹不会抹掉回撤深度）
+        crash_days = getattr(cfg, 'CRASH_GUARD_DAYS', 5)
+        max_daily_drop = getattr(cfg, 'CRASH_GUARD_MAX_DAILY_DROP', -0.05)
+        high_days = getattr(cfg, 'CRASH_GUARD_HIGH_DAYS', 10)
+        max_drawdown = getattr(cfg, 'CRASH_GUARD_MAX_DRAWDOWN', -0.12)
+        if date_idx >= 1:
+            win_start = max(0, date_idx - crash_days)
+            daily_rets = (close[win_start + 1:date_idx + 1] /
+                          close[win_start:date_idx] - 1)
+            if len(daily_rets) > 0 and daily_rets.min() <= max_daily_drop:
+                scores[sym] = 0.0
+                continue
+        if date_idx >= high_days:
+            recent_high = close[date_idx - high_days:date_idx + 1].max()
+            if recent_high > 0 and close[date_idx] / recent_high - 1 <= max_drawdown:
+                scores[sym] = 0.0
+                continue
+
         # 最低得分门槛：低于一定值的归零（避免弱信号交易）
         min_score = getattr(cfg, 'RSI_MIN_SCORE', 2.0)
         scores[sym] = total if total >= min_score else 0.0
