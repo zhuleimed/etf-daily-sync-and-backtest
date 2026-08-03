@@ -67,10 +67,11 @@ def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None]:
     for _, row in df.iterrows():
         d = str(row.get("日期", "")).strip()
         op = str(row.get("操作", "")).strip()
-        # 记录"框架重构"注释行日期（收益序列断裂点，优先用于锚定）
-        if "重构" in op and d:
+        # 记录"重置注释行"日期（收益序列断裂点，优先用于锚定）
+        # 识别两类：框架重构注释行 / 用户清零重启注释行
+        if ("重构" in op or "清零重启" in op) and d:
             reset_markers.append(d[:10])
-        if not d or "历史起点" in d or "重构" in op:
+        if not d or "历史起点" in d or "重构" in op or "清零重启" in op:
             continue
         # 累计收益率形如 "-10.82%"；空值跳过
         r = str(row.get("累计收益率", "")).strip().replace("%", "")
