@@ -198,9 +198,15 @@ python -m simulation.strategies.composite_momentum.daily  # 手动跑复合动�
 │       ├── broker.py               # 模拟交易执行
 │       │   └── SimBroker — 买卖/100股取整/佣金
 │       ├── engine.py               # T+1 每日流程编排
-│       │   └── DailySimEngine — 执行订单→估值→风控→信号→新订单
+│       │   ├── DailySimEngine — 执行订单→估值→风控→信号→新订单
+│       │   ├── exit_when_signal_dead — 持仓信号消失→明日卖出（RSI等启用）
+│       │   └── switch_threshold_func — 自定义切换阈值（RSI用2.0×截面σ）
 │       ├── risk.py                 # 止损/止盈/极端回撤
-│       └── notify.py               # WxPusher 推送
+│       ├── notify.py               # WxPusher 推送
+│       └── backtest_align.py       # 回测vs模拟盘轨迹对齐监控（每晚核心6策略）
+│           ├── 回测起点前45交易日预热 → 锚点重锚 → 逐日对比偏差
+│           ├── 偏差>8pp 微信告警（区分市场亏损与逻辑bug）
+│           └── 自动识别"重构/清零重启"注释行作为收益断点锚定
 │   └── strategies/                 # 各策略模拟盘入口
 │       ├── momentum_rotation/
 │       │   ├── __init__.py

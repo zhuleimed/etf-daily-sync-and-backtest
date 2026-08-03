@@ -633,6 +633,35 @@ pipeline.py
              └─ push_daily_report()           → 推送微信日报
 ```
 
+### 13.4 引擎可选参数（2026-08-03 新增，与回测行为对齐）
+
+`DailySimEngine` 两个可选参数解决"模拟盘与回测行为不一致"问题（默认行为不变，向后兼容）：
+
+| 参数 | 默认 | 作用 | 启用者 |
+|------|:---:|------|--------|
+| `exit_when_signal_dead` | `False` | 持仓信号归零（如RSI得分≤0）→ 产生"持仓信号消失"卖出订单，次日开盘执行。与回测引擎"持仓得分归零→平仓"行为对齐；不受 min_hold 限制 | RSI（`True`） |
+| `switch_threshold_func` | `None` | 自定义切换阈值函数 `(momentum, target, current)->float`，替代默认绝对差 `min_switch_conviction`。回测用相对阈值（如 RSI 得分差 > 2.0×截面标准差）时必须传此参数 | RSI（`max(spread*2.0, 0.1)`） |
+
+**教训（2026-07）：** RSI 模拟盘因缺失上述逻辑，7月比回测多亏8~13pp——
+(1) 回测7-17已因得分归零清仓，模拟盘一直持有到月底；
+(2) 模拟盘绝对阈值1.0在暴跌反弹时放行追高、又阻止了切换到抗跌标的。
+详见 `OPTIMIZATION_HISTORY.md` 2026-08-03 节。
+
+### 13.5 回测轨迹对齐监控（backtest_align.py，2026-08-03 新增）
+
+每晚 pipeline 末尾运行，对核心6策略（momentum_rotation/vol_filter/composite/RSI/ADX/cross_border）执行：
+
+```bash
+python -m simulation.framework.backtest_align            # 核心6策略
+python -m simulation.framework.backtest_align --push     # 超阈值推送微信
+python -m simulation.framework.backtest_align --strategy momentum_rotation  # 单策略
+```
+
+- **原理**：回测从模拟盘起点前45交易日起步（保证预热）→ 以起点日为锚点重锚回测收益 → 逐日对比模拟盘 CSV 累计收益率
+- **阈值**：偏差 > 8pp（百分点）推送告警。回测与模拟盘有固有差异（执行价=次日开盘vs当日开盘、涨跌停检查），正常偏差 1~3pp
+- **收益断点处理**：自动识别 CSV 中"框架重构/清零重启"注释行，从重置后锚定（模拟盘收益归零重算时参照系与回测不同，不处理会产生系统性假偏差）
+- **用途**：区分"市场环境亏损"（两者同跌，偏差小）与"模拟盘逻辑bug"（偏差持续超阈值，如RSI曾-13.6pp）
+
 ---
 
 ## 十四、异常场景汇总
