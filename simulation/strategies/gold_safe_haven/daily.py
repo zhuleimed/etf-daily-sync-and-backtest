@@ -222,6 +222,11 @@ def main():
         state = state_mgr.init_new(INITIAL_CAPITAL)
         state.strategy_name = STRATEGY_NAME
 
+    # 6.1 更新状态字段（与 engine.py 对齐：last_update 必须在执行订单前设置，
+    #     因为 broker 用 state.last_update 记录 buy_date 和 trade_log.date）
+    state.last_update = today_str
+    state.days_since_switch += 1
+
     # 7. 重建恐慌历史（逐日迭代，回填Z-score计算所需的历史数据）
     panic_history = init_panic_history()
     for i in range(max(1, MOMENTUM_WINDOW), today_idx + 1):
@@ -274,6 +279,7 @@ def main():
     if has_position and pos.symbol in today_data:
         stock_value = pos.shares * today_data[pos.symbol]["close"]
     total_value = state.cash + stock_value
+    state.total_value = total_value  # 供 summary/combined 读取最新估值
 
     # 更新峰值
     if total_value > state.peak_value:
@@ -328,6 +334,7 @@ def main():
                 if trade.success:
                     report["order_executed"] = {"type": "buy", "symbol": target_sym,
                         "shares": trade.shares, "price": trade.price, "reason": pending.get("reason", "")}
+                    state.days_since_switch = 0  # 买入后重置持仓计时
                 state.pending_order = None
             elif action == "sell":
                 trade = broker.sell(state, today_data[sell_sym]["open"], reason=pending.get("reason", ""))
@@ -346,6 +353,7 @@ def main():
                 if sell_trade.success:
                     buy_trade = broker.buy(state, target_sym, today_data[target_sym]["open"], reason=pending.get("reason", ""))
                     if buy_trade.success:
+                        state.days_since_switch = 0  # 切换完成后重置持仓计时
                         report["order_executed"] = {
                             "type": "switch",
                             "sell": {"symbol": sell_sym, "shares": sell_trade.shares, "price": sell_trade.price, "pnl": sell_trade.pnl},
@@ -369,6 +377,7 @@ def main():
     if has_position and pos.symbol in today_data:
         stock_value = pos.shares * today_data[pos.symbol]["close"]
     total_value = state.cash + stock_value
+    state.total_value = total_value  # 执行订单后重新估值，保持最新
 
     is_holding_gold = (pos.symbol == GOLD_SYMBOL and pos.shares > 0)
     is_holding_broad = (pos.symbol in BROAD_SYMBOLS and pos.shares > 0)
@@ -410,8 +419,18 @@ def main():
     # 14. 记录CSV日志和SQLite快照
     append_simulation_log(STRATEGY_ID, STRATEGY_NAME, report, ETF_POOL)
     try:
-        sim_db.record_account_daily(str(STATE_FILE_DIR), STRATEGY_ID, today_str,
-            state.cash, stock_value, total_value, pos.symbol, pos.shares)
+        sim_db.record_account_daily({
+            "date": today_str,
+            "strategy": STRATEGY_ID,
+            "strategy_name": STRATEGY_NAME,
+            "cash": round(state.cash, 2),
+            "stock_value": round(stock_value, 2),
+            "total_value": round(total_value, 2),
+            "total_return": round((total_value / state.initial_capital - 1), 6)
+                if state.initial_capital > 0 else 0,
+            "position_symbol": pos.symbol if pos.shares > 0 else "",
+            "position_shares": pos.shares,
+        })
     except Exception as e:
         logger.warning(f"SQLite日结记录失败: {e}")
 

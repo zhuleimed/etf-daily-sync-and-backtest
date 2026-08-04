@@ -1686,9 +1686,12 @@ pip install pandas numpy matplotlib pydantic-settings \
 | B011 | 模拟盘无"持仓信号消失→卖出"逻辑（回测有） | 🔴 | 2026-08-03 | `DailySimEngine(exit_when_signal_dead=True)` |
 | B012 | RSI模拟盘切换阈值错配（绝对1.0 vs 回测2.0×σ） | 🔴 | 2026-08-03 | `switch_threshold_func` 用回测同款相对阈值 |
 | B013 | RSI模拟盘lookback=80信号漂移 | 🟡 | 2026-08-03 | lookback 80→250（Wilder递推收敛） |
+| B014 | 黄金避险 state 字段缺失（last_update/total_value/days_since_switch/buy_date 未更新） | 🟡 | 2026-08-05 | daily.py 补字段更新，与 engine.py 对齐（汇总日报总资产曾显示 0.00、min_hold 保护失效） |
+| B015 | 黄金避险 SQLite 快照签名错误（8位置参数 vs dict） | 🟡 | 2026-08-05 | daily.py 改 dict 调用，快照成功写入 sim_trading.db |
 
 > 详细修复过程见 `OPTIMIZATION_HISTORY.md` 第 1 节。B008-B010 详见 [[daily-report-t1-format]]。
 > B011-B013 详见 2026-08-03 排查记录（模拟盘7月全面亏损：市场暴跌主因+引擎对齐修复）。
+> B014-B015 详见 2026-08-05 排查记录（黄金避险独立实现未跟上框架v2 state 字段规范）。
 
 ---
 

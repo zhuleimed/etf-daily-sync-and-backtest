@@ -188,6 +188,47 @@ AttributeError: partially initialized module 'pandas' has no attribute 'DataFram
 **涉及文件：** `momentum_rotation/engine.py`, `market_regime_rotation/engine.py`
 等所有引用 `from .signal import` 的文件。
 
+### 1.6 黄金避险独立实现未维护 state 字段 + SQLite 快照签名错误
+
+**严重程度：** 🟡 汇总日报数字错误 + min_hold 保护失效 + SQLite 快照缺失
+
+**发现时间：** 2026-08-05，检查 8-04 模拟盘运行情况时发现
+
+**背景：** `gold_safe_haven` 是少数不走公共引擎 `DailySimEngine` 的独立实现，
+而框架 v2 新增的 state 字段规范（`engine.py:141-142, 209`）只在公共引擎中维护。
+独立实现没跟上，导致 state 文件从 2026-07-06 框架 v2 起就存在字段缺失。
+
+**症状：**
+1. `state_gold_safe_haven.json` 中 `last_update=""`、`total_value=0.0`、
+   `days_since_switch=999`、`position.buy_date=""`、`trade_log[0].date=""`
+   （对比正常策略 composite：`2026-08-04` / `9944.23` / `0` / 有值 / 有值）
+2. 微信汇总日报（summary.py 从 state 读 total_value）黄金避险总资产显示 **0.00**（实际 9944.23）
+3. `days_since_switch=999` > MIN_HOLD_DAYS(10) → **min_hold 保护永久失效**（可随时切换）
+4. 每晚日志 WARNING：
+   `SQLite日结记录失败: record_account_daily() takes from 1 to 2 positional arguments but 8 were given`
+
+**根因：**
+- `daily.py` 保存 state 前没有写 `state.last_update/total_value/days_since_switch`；
+  `buy_date` 和 `trade_log.date` 由 `broker.py` 取 `state.last_update`（修复后自动正确）
+- `daily.py:413` 用 8 个位置参数调用 `record_account_daily`，但函数签名只接受 1 个 dict
+  （engine.py / pair_trading / combined 都传 dict，唯独黄金避险没适配）
+
+**修复（`simulation/strategies/gold_safe_haven/daily.py`，4 处）：**
+1. 加载 state 后（执行订单前）：`state.last_update = today_str`、`state.days_since_switch += 1`
+2. 两处估值后：`state.total_value = total_value`
+3. buy / switch 买入成功后：`state.days_since_switch = 0`
+4. SQLite 调用改 dict 形式（对齐 engine.py:243）
+
+**验证（monkeypatch 日期重跑 8-04，跑后备份恢复）：**
+- state 字段全部正确写入（last_update/total_value/days_since_switch/buy_date/trade_log date）
+- `sim_trading.db` 中 gold_safe_haven 8-04 快照成功写入（9944.23），无 WARNING
+- summary.py 读取 total_value=9944.23（修复前 0.0）
+- 历史遗留 state 手工回填：days_since_switch=0、buy_date=2026-08-04、trade_log date=2026-08-04
+
+**通用教训：** 不走 `DailySimEngine` 的独立策略实现（gold_safe_haven / pair_trading / combined），
+必须手动维护 5 个 state 字段（last_update / total_value / days_since_switch / buy_date / trade date）
+和 SQLite 快照 dict 调用。框架 v2 升级时同步审计独立实现。
+
 ---
 
 ## 2. 核心交易逻辑的演进
