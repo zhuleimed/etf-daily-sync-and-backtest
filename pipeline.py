@@ -239,6 +239,14 @@ STEPS: list[dict] = [
         "required": False,
         "timeout": 600,
     },
+    {
+        "id": "asset_allocation",
+        "name": "资产配置(风险平价) 🏦",
+        "cmd": ["-m", "simulation.strategies.asset_allocation.daily"],
+        "cwd": str(PROJECT_DIR),
+        "required": False,
+        "timeout": 600,
+    },
     # ═══ 回测轨迹对齐监控（2026-08-03 新增）═══
     # 跑核心策略回测并与模拟盘CSV逐日对齐，偏差>8pp推送告警，
     # 用于区分"市场环境亏损"与"模拟盘逻辑bug"。
