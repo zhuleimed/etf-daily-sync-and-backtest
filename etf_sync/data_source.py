@@ -113,8 +113,17 @@ class TencentSource:
         if self.active_source == "tencent":
             df = self._tencent_kline(code, days)
             if df is not None and not df.empty:
-                self.last_source = "tencent"
-                self.source_count["tencent"] += 1
+                # 腾讯接口实测上限 ~640 条：请求更长历史时若腾讯拉不满，
+                # 用新浪补齐（新浪实测 1800+ 条，可覆盖 2020 年初至今）
+                if days > 700 and len(df) < days * 0.8:
+                    sina_df = self._sina_kline(code, min(days, 1800))
+                    if sina_df is not None and len(sina_df) > len(df):
+                        df = sina_df
+                        self.last_source = "sina"
+                        self.source_count["sina"] += 1
+                else:
+                    self.last_source = "tencent"
+                    self.source_count["tencent"] += 1
                 return df
             # 腾讯失败 → 切到 Sina
             logger.debug(f"Tencent 失败（{code}），切换 Sina")

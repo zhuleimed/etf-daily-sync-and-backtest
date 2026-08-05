@@ -271,19 +271,22 @@ class ETFSync:
                     )
                     break
 
-                # 计算所需天数（腾讯接口上限 ~800 条，覆盖约 2.3 年）
+                # 计算所需天数
+                # 增量：按本地最新日期算；回填/新ETF：从 start_date 算起一次拉全
+                # （腾讯接口上限 ~640 条，days>700 时 data_source 会自动切新浪，
+                #   新浪实测 1800+ 条，可覆盖 2020 年初至今）
                 last_date = last_dates.get(sym)
                 if last_date:
                     dt_last = datetime.strptime(last_date, "%Y-%m-%d")
                     days_needed = (datetime.now() - dt_last).days + 5
                     days_needed = max(days_needed, 5)
                 else:
-                    # 新 ETF / 回填：从 start_date 算起，确保一次拉全
                     dt_start = datetime.strptime(
                         self.settings.start_date, "%Y-%m-%d"
                     )
                     days_needed = (datetime.now() - dt_start).days + 10
-                    days_needed = min(max(days_needed, 30), 800)
+                    days_needed = max(days_needed, 30)
+                days_needed = min(days_needed, 1800)
 
                 tc_code: str = to_tencent_code(sym)
                 df = self.tc_source.get_daily(tc_code, days=days_needed)
@@ -398,10 +401,24 @@ class ETFSync:
 
                 if idx_type == "index":
                     sina_code: str = to_sina_code(code)
-                    df = self.idx_source.get_daily(sina_code, days=800)
+                    # 增量：按本地最新日期算；回填/无数据：从 start_date 拉全
+                    if local_last:
+                        dt_last = datetime.strptime(local_last, "%Y-%m-%d")
+                        days_needed = (datetime.now() - dt_last).days + 5
+                        days_needed = max(days_needed, 5)
+                    else:
+                        dt_start = datetime.strptime(
+                            self.settings.start_date, "%Y-%m-%d"
+                        )
+                        days_needed = (datetime.now() - dt_start).days + 10
+                        days_needed = max(days_needed, 30)
+                    df = self.idx_source.get_daily(
+                        sina_code, days=min(days_needed, 1800)
+                    )
                 elif idx_type == "etf_proxy":
                     tc_code: str = to_tencent_code(code)
-                    df = self.tc_source.get_daily(tc_code, days=30)
+                    # 中证2000 ETF 代理：days>700 自动切新浪补历史
+                    df = self.tc_source.get_daily(tc_code, days=1800)
                 else:
                     logger.warning(f"sync_index_daily: 未知类型 {idx_type}（{code}）")
                     continue

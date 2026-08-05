@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     """
 
     db_path: str = "data/etf_daily.db"
-    start_date: str = "2024-01-01"
+    start_date: str = "2020-01-01"
     sync_after_hour: int = 20
     sync_after_minute: int = 0
     wxpusher_token: str = ""
