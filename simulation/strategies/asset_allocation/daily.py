@@ -1,7 +1,7 @@
 """资产配置策略 — 模拟盘每日运行入口（独立实现，多资产权重模式）
 
 机制（与回测完全一致）：
-  - 月末最后交易日收盘：用过去 60 日波动率计算风险平价权重（信号）
+  - 月末最后交易日收盘：用过去 60 日波动率计算风险评价权重（信号）
   - 下月首个交易日开盘：按新权重调仓（T+1 执行，检查涨跌停）
   - 每日收盘估值 + 微信日报 + CSV 日志 + SQLite 快照
 
@@ -40,7 +40,7 @@ from strategies.asset_allocation.backtest import risk_parity_weights
 logger = logging.getLogger("asset_alloc_sim")
 
 STRATEGY_ID = "asset_allocation"
-STRATEGY_NAME = "资产配置(风险平价)"
+STRATEGY_NAME = "资产配置(风险评价)"
 STATE_FILE = PROJECT_ROOT / "simulation" / "output" / f"state_{STRATEGY_ID}.json"
 DB_PATH = PROJECT_ROOT / "data" / "etf_daily.db"
 
@@ -82,7 +82,7 @@ def init_state() -> dict:
 # ════════════════════════════════════════════════════════
 
 def compute_weights(etf_data: dict[str, pd.DataFrame], date: str) -> dict[str, float]:
-    """月末风险平价权重（用截至 date 的 60 日波动率）。"""
+    """月末风险评价权重（用截至 date 的 60 日波动率）。"""
     rets = {}
     for sym, df in etf_data.items():
         sub = df[df["date"] <= date]
@@ -159,6 +159,33 @@ def execute_rebalance(
 # ════════════════════════════════════════════════════════
 # 主流程
 # ════════════════════════════════════════════════════════
+
+def _append_csv_log(state: dict, today_str: str, action: str,
+                    total_value: float, total_return: float) -> None:
+    """自写 CSV 日志（与标准格式一致，供 summary 汇总）。
+
+    append_simulation_log 依赖 report["state"]（DailySimEngine 结构），
+    资产配置的 state 是 holdings dict（多资产），结构不同——直接追加。
+    """
+    import csv as _csv
+    path = PROJECT_ROOT / "simulation" / "output" / f"sim_log_{STRATEGY_ID}.csv"
+    header = ["日期", "策略", "操作", "持仓标的", "持仓名称", "持仓数量",
+              "持仓均价", "现金", "市值", "总资产", "累计收益率",
+              "订单执行", "明日待执行"]
+    hold_desc = ";".join(
+        f"{ASSETS.get(s, s)}:{p['shares']}股" for s, p in state.get("holdings", {}).items()
+    ) or "空仓"
+    row = [today_str, STRATEGY_NAME, action, hold_desc, "", "",
+           len(state.get("holdings", {})), round(state.get("cash", 0), 2),
+           round(total_value - state.get("cash", 0), 2),
+           round(total_value, 2), f"{total_return:+.2f}%", "", ""]
+    new_file = not path.exists()
+    with open(path, "a", encoding="utf-8-sig", newline="") as f:
+        w = _csv.writer(f)
+        if new_file:
+            w.writerow(header)
+        w.writerow(row)
+
 
 def main() -> None:
     today_str = datetime.today().strftime("%Y-%m-%d")
@@ -242,7 +269,7 @@ def main() -> None:
         "target_weights": state.get("target_weights", {}),
         "pending_weights": state.get("pending_weights"),
     }
-    append_simulation_log(STRATEGY_ID, STRATEGY_NAME, report, ASSETS)
+    _append_csv_log(state, today_str, action, total_value, total_return)
     try:
         sim_db.record_account_daily({
             "date": today_str,

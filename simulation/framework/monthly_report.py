@@ -31,7 +31,7 @@ STRATEGY_NAMES: dict[str, str] = {
     "adaptive_rotation": "自适应轮动",
     "gold_safe_haven": "黄金避险 🥇",
     "cross_border": "跨境轮动 🌏",
-    "asset_allocation": "资产配置(风险平价) 🏦",
+    "asset_allocation": "资产配置(风险评价) 🏦",
     "neural_momentum": "Neural Momentum 🧠",
         "dual_momentum": "双动量",
     "sortino_ranking": "Sortino排名",

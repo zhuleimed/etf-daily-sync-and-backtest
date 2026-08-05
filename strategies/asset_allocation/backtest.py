@@ -88,7 +88,7 @@ def _cap_weights(weights: dict[str, float], max_w: float) -> dict[str, float]:
 
 
 def risk_parity_weights(vols: pd.Series) -> dict[str, float]:
-    """风险平价：权重 ∝ 1/波动率（归一化 + 单资产上限）。
+    """风险评价：权重 ∝ 1/波动率（归一化 + 单资产上限）。
 
     NaN 处理：个别资产停牌（如拆分期）导致波动率 NaN 时用中位数填充，
     避免整组权重被 NaN 污染。
@@ -105,7 +105,7 @@ def constant_weights() -> dict[str, float]:
 
 
 def target_vol_weights(vols: pd.Series) -> dict[str, float]:
-    """目标波动率：风险平价权重整体缩放至目标组合波动率，剩余配货币。
+    """目标波动率：风险评价权重整体缩放至目标组合波动率，剩余配货币。
 
     组合波动率 ≈ Σ w_i × σ_i（加权近似），缩放因子 = TARGET_VOL / 组合加权波动率。
     """
@@ -291,13 +291,13 @@ def main() -> None:
                 r["period"] = period
                 results.append(r)
 
-    # 2026 年逐月收益明细（风险平价，看 6-7 月下行表现）
+    # 2026 年逐月收益明细（风险评价，看 6-7 月下行表现）
     try:
         from strategies.asset_allocation.backtest import backtest_equity_series
         eq26 = backtest_equity_series(close_df, "risk_parity", "2026-01-01")
         if eq26 is not None and len(eq26) > 1:
             mret = eq26.resample("ME").last().pct_change().dropna()
-            logger.info("2026 年逐月收益（风险平价）:")
+            logger.info("2026 年逐月收益（风险评价）:")
             for dt, v in mret.items():
                 logger.info(f"  {dt.strftime('%Y-%m')}: {v*100:+.2f}%")
     except Exception as e:
@@ -309,7 +309,7 @@ def main() -> None:
     # 报表
     logger.info("=" * 60)
     logger.info(f"{'方法':<12}{'期间':<8}{'收益':>8}{'年化':>8}{'回撤':>8}{'夏普':>7}")
-    names = {"equal": "等权1/N", "constant": "恒定比例", "risk_parity": "风险平价", "target_vol": "目标波动率"}
+    names = {"equal": "等权1/N", "constant": "恒定比例", "risk_parity": "风险评价", "target_vol": "目标波动率"}
     for r in sorted(results, key=lambda x: (x["method"], x["period"])):
         logger.info(
             f"{names.get(r['method'], r['method']):<12}{r['period']:<8}"

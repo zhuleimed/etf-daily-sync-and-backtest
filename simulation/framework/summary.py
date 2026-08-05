@@ -30,7 +30,7 @@ _FALLBACK_NAMES: dict[str, str] = {
     "adaptive_rotation": "自适应轮动",
     "gold_safe_haven": "黄金避险",
     "cross_border": "跨境轮动",
-    "asset_allocation": "资产配置(风险平价)",
+    "asset_allocation": "资产配置(风险评价)",
     "neural_momentum": "Neural Momentum",
         "dual_momentum": "双动量",
     "sortino_ranking": "Sortino排名",
@@ -94,7 +94,10 @@ def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
     if n < 2:
         return {"n_days": n}
 
-    tv = df["总资产"].values
+    # 过滤无效行（清零/重构注释行的总资产列为空 NaN，污染回撤计算）
+    tv = pd.to_numeric(df["总资产"], errors="coerce").dropna().values
+    if len(tv) < 2:
+        return {"n_days": len(tv)}
     ic = initial_capital if initial_capital > 0 else tv[0]
 
     # 累计收益率

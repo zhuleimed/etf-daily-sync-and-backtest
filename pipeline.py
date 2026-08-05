@@ -241,7 +241,7 @@ STEPS: list[dict] = [
     },
     {
         "id": "asset_allocation",
-        "name": "资产配置(风险平价) 🏦",
+        "name": "资产配置(风险评价) 🏦",
         "cmd": ["-m", "simulation.strategies.asset_allocation.daily"],
         "cwd": str(PROJECT_DIR),
         "required": False,
