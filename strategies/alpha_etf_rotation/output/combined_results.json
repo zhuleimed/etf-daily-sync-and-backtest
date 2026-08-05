@@ -1,0 +1,26 @@
+{
+  "combined": {
+    "total_return": -0.1457,
+    "annual": -0.0726,
+    "sharpe": -0.173,
+    "max_drawdown": -0.4164
+  },
+  "rotation_full": {
+    "total_return": -0.1515,
+    "annual": -0.0756,
+    "sharpe": -0.044,
+    "max_drawdown": -0.5376
+  },
+  "timing_only": {
+    "total_return": 0.0043,
+    "annual": 0.0021,
+    "sharpe": 0.086,
+    "max_drawdown": -0.2736
+  },
+  "buy_hold": {
+    "total_return": 0.0742,
+    "annual": 0.0348,
+    "sharpe": 0.27,
+    "max_drawdown": -0.3008
+  }
+}

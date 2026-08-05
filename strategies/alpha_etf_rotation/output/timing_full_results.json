@@ -1,0 +1,22 @@
+{
+  "mean_ic": 0.0608,
+  "n_periods": 18,
+  "pure": {
+    "total_return": 0.1661,
+    "annual": 0.0763,
+    "sharpe": 0.829,
+    "max_drawdown": -0.0788
+  },
+  "segmented": {
+    "total_return": 0.2175,
+    "annual": 0.0987,
+    "sharpe": 0.861,
+    "max_drawdown": -0.1094
+  },
+  "buy_hold": {
+    "total_return": 0.2209,
+    "annual": 0.1001,
+    "sharpe": 0.662,
+    "max_drawdown": -0.1959
+  }
+}
