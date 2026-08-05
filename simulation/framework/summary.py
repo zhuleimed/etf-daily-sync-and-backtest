@@ -89,7 +89,20 @@ def _extract_strategy_id(filename: str) -> Optional[str]:
 
 
 def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
-    """从CSV历史数据计算绩效指标。"""
+    """从CSV历史数据计算绩效指标。
+
+    关键：指标从最后一个"清零/重构注释行"之后算起——
+    清零重启（2026-08-03）时 7 月历史亏损段仍留在 CSV 中，
+    若从历史算，清零后仅运行 1-2 天也会显示 -12%/-19% 的旧回撤。
+    """
+    # 定位最后一个注释行（操作列以【开头：清零重启/框架重构）
+    mask = pd.Series(False, index=df.index)
+    if "操作" in df.columns:
+        mask = df["操作"].astype(str).str.startswith("【")
+    last_comment = df.index[mask].max() if mask.any() else None
+    if last_comment is not None:
+        df = df.iloc[last_comment + 1:]
+
     n = len(df)
     if n < 2:
         return {"n_days": n}
