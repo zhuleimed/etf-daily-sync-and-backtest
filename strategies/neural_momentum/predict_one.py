@@ -26,13 +26,23 @@ OUTPUT_DIR = Path(__file__).parent / "output"
 WINDOW, TRAIN_YEARS, RETRAIN_MONTHS, FIRST_PREDICT, FUTURE_DAYS = 30, 3, 3, "2021-04-01", 5
 
 
-def build_seq(d: pd.DataFrame, feat_cols: list[str], start: str, end: str):
+def build_seq(d: pd.DataFrame, feat_cols: list[str], start: str, end: str,
+              require_y: bool = True):
+    """构建序列样本。
+
+    require_y=True（训练）：y 为 NaN 的行跳过（未来 5 日收益未知）。
+    require_y=False（预测）：允许 y NaN——预测覆盖到数据最新日
+    （评分滞后 5 交易日的根因修复：此前预测也跳过无标签行，导致
+    评分只到"最新日-5"，模拟盘信号日缺评分退化为纯动量）。
+    """
     X, y, dates = [], [], []
     sub = d[(d.index >= start) & (d.index <= end)]
     vals, yv = sub[feat_cols].values, sub["y"].values
     for i in range(WINDOW, len(sub)):
         feat = vals[i - WINDOW:i]
-        if np.isnan(feat).any() or np.isnan(yv[i]):
+        if np.isnan(feat).any():
+            continue
+        if require_y and np.isnan(yv[i]):
             continue
         X.append(feat)
         y.append(yv[i])
@@ -73,8 +83,15 @@ def main() -> None:
         train_start = train_end - pd.DateOffset(years=TRAIN_YEARS)
         X_tr, y_tr, _ = build_seq(d, feat_cols, train_start.strftime("%Y-%m-%d"),
                                   train_end.strftime("%Y-%m-%d"))
-        X_te, _, te_dts = build_seq(d, feat_cols, p_start.strftime("%Y-%m-%d"),
-                                    pdates[-1].strftime("%Y-%m-%d"))
+        # 预测期可能不足 WINDOW（最后一个不完整期，如 2026-07 仅 25 交易日 < 30）
+        # → 窗口向前扩展 60 天保证有足够历史，再过滤出期内的预测日期
+        win_start = p_start - pd.Timedelta(days=60)
+        X_te, _, te_dts = build_seq(d, feat_cols, win_start.strftime("%Y-%m-%d"),
+                                    pdates[-1].strftime("%Y-%m-%d"), require_y=False)
+        if len(te_dts):
+            keep = te_dts >= p_start
+            X_te = X_te[keep]
+            te_dts = te_dts[keep]
         if len(X_tr) < 200 or len(X_te) < 10:
             continue
         model = build_model("agru", X_tr.shape[2])

@@ -64,12 +64,15 @@ def neural_momentum_signals(
         else:
             momentums[sym] = np.nan
 
-    # ── 2. 神经分（当日评分） ──
+    # ── 2. 神经分（当日评分，ffill：T 日用最近可用评分） ──
+    # 评分覆盖到重训日（预测不依赖未来标签），但信号日可能晚于重训日——
+    # 用 searchsorted 取 ≤ T 日的最近一行，避免评分缺失退化为纯动量
     neural = load_neural_scores()
     n_row = None
     if neural is not None and signal_date is not None:
-        if signal_date in neural.index:
-            n_row = neural.loc[signal_date]
+        idx = neural.index.searchsorted(signal_date, side="right") - 1
+        if idx >= 0:
+            n_row = neural.iloc[idx]
 
     # ── 3. 混合：动量 z-score + 神经分 ──
     m_series = pd.Series(momentums).dropna()
