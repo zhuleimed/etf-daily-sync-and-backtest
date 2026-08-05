@@ -1,0 +1,44 @@
+{
+  "results": [
+    {
+      "status": "ok",
+      "method": "一次性买入持有",
+      "total_invested": 100000.0,
+      "final_value": 124487.41,
+      "total_return": 0.2449,
+      "annual_return": 0.0313,
+      "max_drawdown": -0.451,
+      "n_weeks": 1
+    },
+    {
+      "status": "ok",
+      "method": "factor_low=1.0,factor_high=1.0",
+      "total_invested": 375000.0,
+      "final_value": 417125.42,
+      "total_return": 0.1123,
+      "annual_return": 0.0151,
+      "max_drawdown": -0.1727,
+      "n_weeks": 375
+    },
+    {
+      "status": "ok",
+      "method": "factor_low=1.5,factor_high=0.5",
+      "total_invested": 377500.0,
+      "final_value": 424426.29,
+      "total_return": 0.1243,
+      "annual_return": 0.0166,
+      "max_drawdown": -0.135,
+      "n_weeks": 375
+    },
+    {
+      "status": "ok",
+      "method": "factor_low=1.7,factor_high=0.3",
+      "total_invested": 378500.0,
+      "final_value": 427346.65,
+      "total_return": 0.1291,
+      "annual_return": 0.0172,
+      "max_drawdown": -0.1235,
+      "n_weeks": 375
+    }
+  ]
+}
