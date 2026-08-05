@@ -15,7 +15,7 @@ for etf in $ETFS; do
         continue
     fi
     # 等待并发槽
-    while [ $(pgrep -fc "predict_one.py --etf" 2>/dev/null || echo 0) -ge $CONC ]; do
+    while [ $(pgrep -fc "[p]redict_one.py --etf" 2>/dev/null || echo 0) -ge $CONC ]; do
         sleep 5
     done
     env -u KMP_AFFINITY -u OMP_NUM_THREADS nohup $PY -m strategies.neural_momentum.predict_one --etf $etf \
@@ -24,6 +24,6 @@ for etf in $ETFS; do
 done
 
 # 等待全部完成
-while pgrep -f "predict_one.py --etf" > /dev/null; do sleep 10; done
+while pgrep -f "[p]redict_one.py --etf" > /dev/null; do sleep 10; done
 echo "=== 全部完成 ==="
 ls output/scores_*.csv | wc -l
