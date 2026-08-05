@@ -417,8 +417,16 @@ class ETFSync:
                     )
                 elif idx_type == "etf_proxy":
                     tc_code: str = to_tencent_code(code)
-                    # 中证2000 ETF 代理：days>700 自动切新浪补历史
-                    df = self.tc_source.get_daily(tc_code, days=1800)
+                    # 增量优先（与指数同逻辑）；无本地数据才拉全量
+                    if local_last:
+                        dt_last = datetime.strptime(local_last, "%Y-%m-%d")
+                        days_needed = (datetime.now() - dt_last).days + 5
+                        days_needed = max(days_needed, 5)
+                    else:
+                        days_needed = 1800
+                    df = self.tc_source.get_daily(
+                        tc_code, days=min(days_needed, 1800)
+                    )
                 else:
                     logger.warning(f"sync_index_daily: 未知类型 {idx_type}（{code}）")
                     continue
