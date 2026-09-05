@@ -70,6 +70,17 @@ def _check_suspended(today_data: dict, symbol: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _risk_cooldown_active(engine: "DailySimEngine") -> bool:
+    """风控清仓后回补冷却是否仍生效（仅离线实验，默认 cooldown=0 恒 False）。"""
+    c = engine.risk_exit_reentry_cooldown
+    if c <= 0:
+        return False
+    bar0 = engine._risk_exit_bar
+    if bar0 is None:
+        return False
+    return (engine._bar - bar0) < c
+
+
 class DailySimEngine:
     """每日模拟盘引擎（T+1 待执行订单模式）。"""
 
@@ -91,6 +102,8 @@ class DailySimEngine:
         drawdown_threshold: float = 0.15,
         exit_when_signal_dead: bool = False,
         switch_threshold_func: Optional[Callable] = None,
+        confirm_days: int = 1,
+        risk_exit_reentry_cooldown: int = 0,
     ):
         self.state_mgr = state_mgr
         self.broker = broker
@@ -112,6 +125,20 @@ class DailySimEngine:
         self.profit_threshold = profit_threshold
         self.drawback_pct = drawback_pct
         self.drawdown_threshold = drawdown_threshold
+
+        # ── 修复摩擦的离线实验杠杆（默认 OFF，live 字节不变）──
+        # 促销到真盘需持久化计数（SimState 版本化字段）；此处仅引擎实例级，
+        # 供 simulation.analysis.repair_bt 的单进程回放计数使用。
+        # confirm_days: 开仓/切换目标需连续 N 日保持 rank1/动量>0 才发 pending
+        #               （平滑单日假 leader）。=1 即当日行为，不改变现状。
+        # risk_exit_reentry_cooldown: 风控触发卖出后，需在现金里至少 N 巴才允许
+        #               再次开仓（抑制"风控清仓→立刻追高回补"摩擦）。=0 不生效。
+        self.confirm_days = max(int(confirm_days), 1)
+        self.risk_exit_reentry_cooldown = max(int(risk_exit_reentry_cooldown), 0)
+        # 进程内跨日计数（单一引擎复用时确定）：
+        self._bar = 0                       # 已运行交易日计数
+        self._confirm = {"sym": None, "days": 0}   # 当前连续确认的目标
+        self._risk_exit_bar: Optional[int] = None  # 风控卖出 pending 创建的巴号
 
     # ── 主入口 ──
 
@@ -140,6 +167,7 @@ class DailySimEngine:
             state = self.state_mgr.init_new(self.config.get("initial_capital", 10000))
         state.last_update = today_str
         state.days_since_switch += 1
+        self._bar += 1
 
         # ── 2. 重置 T+1 标记（昨天的持仓今天可以卖了） ──
         state.position.today_opened = False
@@ -236,6 +264,9 @@ class DailySimEngine:
                     "created": today_str,
                 }
                 report["action"] = "risk_pending"
+                # 记录风控卖出 pending 的巴号，作为回补冷却计时起点（默认不启用）
+                if self.risk_exit_reentry_cooldown > 0:
+                    self._risk_exit_bar = self._bar
             self.state_mgr.save(state)
             report["state"] = state
             # 写入每日快照（风控触发时也有估值数据）
@@ -323,20 +354,33 @@ class DailySimEngine:
 
         if can_create_pending:
             signal = report["signal"]
-            if signal == "open_pending":
+            # 开仓/切换目标需连续 confirm_days 日保持同一目标才发（平滑单日假 leader）。
+            # confirm_days==1(默认)：不进入计数，恒 confirmed=True，行为与现状字节一致。
+            # confirm_days>1 ：仅 signal 为 open/switch 当日推进 streak，目标一变即清零。
+            target_today = signal in ("open_pending", "switch_pending")
+            confirmed = True
+            if target_today and target_etf is not None and self.confirm_days > 1:
+                if self._confirm["sym"] == target_etf:
+                    self._confirm["days"] += 1
+                else:
+                    self._confirm = {"sym": target_etf, "days": 1}
+                confirmed = self._confirm["days"] >= self.confirm_days
+
+            if signal == "exit_pending":
+                state.pending_order = {
+                    "action": "sell", "symbol": hold_sym,
+                    "reason": "持仓信号消失", "created": today_str,
+                }
+            # open/switch 需过 confirm；且现金开的 open 还要过风控清仓回补冷却
+            elif signal == "open_pending" and confirmed and not _risk_cooldown_active(self):
                 state.pending_order = {
                     "action": "buy", "symbol": target_etf,
                     "reason": "动量信号开仓", "created": today_str,
                 }
-            elif signal == "switch_pending":
+            elif signal == "switch_pending" and confirmed:
                 state.pending_order = {
                     "action": "switch", "sell_symbol": hold_sym,
                     "buy_symbol": target_etf, "reason": "动量切换", "created": today_str,
-                }
-            elif signal == "exit_pending":
-                state.pending_order = {
-                    "action": "sell", "symbol": hold_sym,
-                    "reason": "持仓信号消失", "created": today_str,
                 }
         # 当 can_create_pending=False 时：
         #   - 信号已计算（report["signal"]）供日报展示
