@@ -10,7 +10,9 @@
 
 回测与模拟盘存在固有差异（回测无涨跌停、执行价=当日open vs 模拟盘=次日open 等），
 正常偏差约 1~3pp；暴跌市/极端行情下可达 5~8pp。
-偏差 > 阈值时告警，提示人工检查——既可能是模拟盘 bug，也可能是市场异常。
+偏差以"最新交易日"为准 > 阈值时告警（模拟盘逐日滚动，历史某日曾越线不代表当前仍
+脱离轨迹；真实 bug 若持仓持续偏离会令当日偏差持续越线而每日照常告警）——提示人工检查，
+既可能是模拟盘 bug，也可能是市场异常。
 
 用法：
   python -m simulation.framework.backtest_align --strategy momentum_rotation
@@ -186,19 +188,27 @@ def align(sid: str, sim_dates: list[str], sim_rets: list[float],
 
 
 def report(sid: str, records: list[dict], threshold: float, push: bool) -> bool:
-    """输出偏差报告，超阈值告警。返回是否超阈值。"""
+    """输出偏差报告，超阈值告警。返回是否超阈值。
+
+    告警只看"最新交易日"的偏差——模拟盘是逐日滚动的账户，某一天曾经超阈值
+    不代表当前仍脱离轨迹；真实引擎 bug 若导致持仓持续偏离，当日偏差会持续
+    >阈值并每天照常告警，不会漏报。窗口内历史的异常天数仅作打印参考，不触发。
+    """
     if not records:
         print(f"  ⚠ {sid}: 无可对齐记录")
         return False
     last = records[-1]
     max_dev = max(records, key=lambda r: abs(r["dev"]))
-    over = [r for r in records if abs(r["dev"]) > threshold * 100]
+    hist_over = [r["date"] for r in records if abs(r["dev"]) > threshold * 100]
+    is_over = abs(last["dev"]) > threshold * 100
 
     print(f"\n═══ {sid} 轨迹对齐（共{len(records)}个共同交易日）═══")
     print(f"  当前: 模拟盘{last['sim_ret']:+.2f}% vs 回测{last['back_ret']:+.2f}% → 偏差{last['dev']:+.2f}pp")
-    print(f"  最大偏差: {max_dev['date']} {max_dev['dev']:+.2f}pp (模拟盘{max_dev['sim_ret']:+.1f}% vs 回测{max_dev['back_ret']:+.1f}%)")
-    if over:
-        print(f"  ⚠ 超阈值({threshold*100:.0f}pp) {len(over)}天: {[r['date'] for r in over[:8]]}")
+    print(f"  最大偏差(历史): {max_dev['date']} {max_dev['dev']:+.2f}pp (模拟盘{max_dev['sim_ret']:+.1f}% vs 回测{max_dev['back_ret']:+.1f}%)")
+    if hist_over:
+        print(f"  ℹ 窗口内历史曾超阈值({threshold*100:.0f}pp) {len(hist_over)}天: {hist_over[:8]}（只作参考，不触发告警）")
+    if is_over:
+        print(f"  ⚠ 最新交易日偏差 {last['dev']:+.2f}pp 超阈值({threshold*100:.0f}pp)")
         if push:
             # 用 send_message 而非 push_error_alert：后者会标"运行异常"标题
             from simulation.framework.notify import send_message
@@ -206,13 +216,12 @@ def report(sid: str, records: list[dict], threshold: float, push: bool) -> bool:
             lines = [
                 f"⚠️ 轨迹对齐告警 {sid} | {today}",
                 f"模拟盘 {last['sim_ret']:+.2f}% vs 回测 {last['back_ret']:+.2f}%",
-                f"当前偏差 {last['dev']:+.2f}pp，最大 {max_dev['dev']:+.2f}pp ({max_dev['date']})",
-                f"超阈值天数: {len(over)}",
+                f"当前偏差 {last['dev']:+.2f}pp（阈值{threshold*100:.0f}pp）",
                 "提示：检查模拟盘日志与回测轨迹，判断是逻辑bug还是市场异常",
             ]
             send_message(f"⚠️ 轨迹对齐告警-{sid}", "\n".join(lines))
         return True
-    print(f"  偏差在阈值内 ✅")
+    print(f"  最新交易日偏差在阈值内 ✅")
     return False
 
 
