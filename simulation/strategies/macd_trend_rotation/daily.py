@@ -136,6 +136,14 @@ def main():
     if today_idx is None: logger.warning(f"数据不足"); push_daily_report(STRATEGY_NAME, ["数据不足"]); return
 
     state_mgr = StateManager(str(STATE_FILE_DIR), "macd_trend_rotation")
+
+    # 同日幂等防重：若本交易日已被处理过(state.last_update==today)，跳过。
+    # 2026-09-05排查: 08-18 曾同日多次重跑致伪信号/切换。
+    _prev = state_mgr.load()
+    if _prev is not None and str(getattr(_prev, "last_update", "")) == today_str:
+        logger.info(f"{today_str} 本交易日已处理，跳过（防同日重复重跑制造假信号）")
+        return
+
     broker = SimBroker(state_mgr, commission_rate=COMMISSION_RATE, slippage=SLIPPAGE)
     engine = DailySimEngine(
         state_mgr=state_mgr, broker=broker, config={"initial_capital": INITIAL_CAPITAL},

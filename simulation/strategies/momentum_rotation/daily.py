@@ -211,6 +211,14 @@ def main():
 
     # 5. 初始化模拟盘组件
     state_mgr = StateManager(str(STATE_FILE_DIR), "momentum_rotation")
+
+    # 同日幂等防重：若本交易日已被处理过(state.last_update==today)，跳过。
+    # 2026-09-05排查: 08-18 曾多次重跑致同日伪切换(563000→512100)，干净单日引擎不切换。
+    _prev = state_mgr.load()
+    if _prev is not None and str(getattr(_prev, "last_update", "")) == today_str:
+        logger.info(f"{today_str} 本交易日已处理，跳过（防同日重复重跑制造假信号）")
+        return
+
     broker = SimBroker(state_mgr, commission_rate=COMMISSION_RATE, slippage=SLIPPAGE)
     engine = DailySimEngine(
         state_mgr=state_mgr,
