@@ -30,7 +30,7 @@ from simulation.strategies.macd_trend_rotation.config import (
     ETF_POOL, ETF_SYMBOLS, MOMENTUM_WINDOW, MIN_SWITCH_CONVICTION,
     MIN_HOLD_DAYS, COMMISSION_RATE, SLIPPAGE, DB_PATH, INITIAL_CAPITAL,
     RISK_MODE, STOP_LOSS_PCT, PROFIT_THRESHOLD, DRAWBACK_PCT,
-    DRAWDOWN_THRESHOLD, STRATEGY_NAME, STATE_FILE_DIR,
+    DRAWDOWN_THRESHOLD, CONFIRM_DAYS, STRATEGY_NAME, STATE_FILE_DIR,
 )
 
 from strategies.macd_trend_rotation.momentum_signals import (
@@ -145,6 +145,7 @@ def main():
         risk_mode=RISK_MODE, stop_loss_pct=STOP_LOSS_PCT,
         profit_threshold=PROFIT_THRESHOLD, drawback_pct=DRAWBACK_PCT,
         drawdown_threshold=DRAWDOWN_THRESHOLD,
+        confirm_days=CONFIRM_DAYS,
     )
     report = engine.run_daily(etf_data, today_idx, today_str)
     if "error" in report: logger.error(report["error"]); push_error_alert(STRATEGY_NAME, report["error"]); return
