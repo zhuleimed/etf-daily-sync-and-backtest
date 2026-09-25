@@ -12,7 +12,21 @@ class TailRiskEngine(BacktestEngine):
             top_n=1, dynamic_window=False)
         self.tail_threshold=kw.get('tail_threshold',cfg.TAIL_THRESHOLD)
         self.vol_window=kw.get('vol_window',cfg.VOL_WINDOW)
-        self.hs300_data=None
+        # 沪深300指数（尾部风险判据的数据源）。显式传入优先；
+        # 不传时由 load_data 自动接基类已加载的 benchmark_data。
+        # 【2026-09-25 修复】原实现硬编码为 None，_check_tail 恒返回 False，
+        #   导致"尾部风险"分支在回测中从未触发过，策略退化成纯动量。
+        self.hs300_data=kw.get('hs300_data')
+
+    def load_data(self, start_date: str = "2024-01-01",
+                  end_date: str = "", db_path: str = cfg.DB_PATH
+                  ) -> "TailRiskEngine":
+        """加载行情，并把沪深300基准接到 hs300_data 上（尾部风险判据要用）。"""
+        super().load_data(start_date, end_date, db_path)
+        if self.hs300_data is None:
+            bench = getattr(self, "benchmark_data", None)
+            self.hs300_data = bench if bench is not None and not bench.empty else None
+        return self
     
     def _check_tail(self, idx):
         if self.hs300_data is None or idx<22: return False

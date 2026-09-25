@@ -196,8 +196,8 @@ def main() -> int:
     eng.tail_threshold = cfg.TAIL_THRESHOLD
     # 与原回测同源：真实沪深300指数（index_daily 表），非 ETF 代理。
     # 注意 date 必须保持字符串——引擎用 str(date)[:10] 去 hs.index 里查。
-    # 另外：回测引擎 __init__ 里把 hs300_data 硬编码成 None，即回测端该分支
-    #      从未触发过；这里显式喂入指数，比较的是"策略本意"的逻辑。
+    # （引擎自 2026-09-25 起会在 load_data 时自动接上 benchmark_data，
+    #   这里仍显式喂入，是为了让本脚本不依赖引擎的加载细节。）
     from strategies.momentum_rotation.data import load_benchmark_data
     eng.hs300_data = load_benchmark_data()
     ok = bad = tab = 0
