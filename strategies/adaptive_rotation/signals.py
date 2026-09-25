@@ -135,8 +135,11 @@ def _compute_reversion_scores(
     mask = (rsi_s >= cfg.REV_OVERSOLD_RSI) | rsi_s.isna() | \
            (pct_b_s >= cfg.REV_OVERSOLD_PCT_B) | pct_b_s.isna()
 
-    # 分量转换
-    pct_b_raw = (-pct_b_s).clip(lower=0)
+    # 分量转换 —— 两分量都必须相对"各自配置的阈值"计算，才与上面的 mask 口径一致。
+    # 注意 pct_b 原本写成 (-pct_b_s)，等于把阈值硬编码成 0：
+    # 当 REV_OVERSOLD_PCT_B 调离 0 时，通过 mask 的标的（0<pct_b<阈值）仍会被 clip 成 0 分，
+    # 阈值参数形同虚设。当前阈值为 0.0，改法数学上等价，不改变任何历史结果。
+    pct_b_raw = (cfg.REV_OVERSOLD_PCT_B - pct_b_s).clip(lower=0)
     rsi_raw = ((cfg.REV_OVERSOLD_RSI - rsi_s) / cfg.REV_OVERSOLD_RSI).clip(lower=0)
     vol_raw = (1.0 - vol_s).clip(lower=0)
 

@@ -89,6 +89,11 @@ def _make_action_description(report: dict, etf_pool: dict[str, str]) -> str:
 
     if action == "hold":
         sym = report.get("hold_symbol", "")
+        if not sym:
+            # 引擎的 action 默认值是 "hold"，空仓日也会保留该值
+            # （真正的判定在 report["signal"]="hold_cash"）。
+            # 不特判会渲染成 "持有 []"，与推送日报口径不一致。
+            return "空仓，无买入信号"
         name = etf_pool.get(sym, sym)
         return f"持有 {name}[{sym}]"
 

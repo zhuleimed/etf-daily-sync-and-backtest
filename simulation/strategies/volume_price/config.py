@@ -1,7 +1,7 @@
 """量价配合 模拟盘配置"""
 from __future__ import annotations
 from pathlib import Path
-from strategies.volume_price.config import ETF_POOL, ETF_SYMBOLS, MOMENTUM_WINDOW, COMMISSION_RATE, SLIPPAGE, DB_PATH
+from strategies.volume_price.config import ETF_POOL, ETF_SYMBOLS, MOMENTUM_WINDOW, COMMISSION_RATE, SLIPPAGE, DB_PATH, VOL_LONG_PERIOD
 MIN_SWITCH_CONVICTION=0.03; MIN_HOLD_DAYS=10; RISK_MODE="A"
 INITIAL_CAPITAL = 10000
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "output"

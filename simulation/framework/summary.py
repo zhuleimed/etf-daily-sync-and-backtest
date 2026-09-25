@@ -141,6 +141,13 @@ def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
     # 胜率
     win_rate = (daily_ret > 0).sum() / n if n > 0 else None
 
+    # ── 资金曲线指纹 ──
+    # 用途：识别"多个策略其实是同一份信号跑出来的同一条曲线"——
+    # 典型成因是 daily.py 由模板复制、signal_func 还指向别的策略，
+    # 结果 7 个策略名字不同但每日净值逐分相同（2026-09 发现）。
+    # 取"元"精度（2位小数）拼接：只有逐日净值完全相同才会撞上。
+    fingerprint = ",".join(f"{float(v):.2f}" for v in tv)
+
     return {
         "total_return": total_return,
         "annual_return": annual_return,
@@ -148,6 +155,7 @@ def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
         "max_drawdown": max_dd,
         "win_rate": win_rate,
         "n_days": n,
+        "fingerprint": fingerprint,
     }
 
 
@@ -241,6 +249,20 @@ def build_strategy_summary(output_dir: str) -> list[dict]:
 # ═══════════════════════════════════════════════
 
 
+def find_duplicate_curve_groups(strategies: list[dict]) -> list[list[str]]:
+    """找出资金曲线完全相同的策略分组（每组≥2个）。
+
+    返回 [[名称, 名称, ...], ...]，用于在汇总里提示"这些策略其实是同一条曲线"。
+    """
+    groups: dict[str, list[str]] = {}
+    for s in strategies:
+        fp = s.get("metrics", {}).get("fingerprint")
+        if not fp:
+            continue
+        groups.setdefault(fp, []).append(str(s.get("name", s.get("strategy_id", "?"))))
+    return [names for names in groups.values() if len(names) > 1]
+
+
 def format_summary_text(
     strategies: list[dict],
     pipeline_info: Optional[dict] = None,
@@ -332,6 +354,17 @@ def format_summary_text(
     # 底部
     lines.append("\n" + "─" * 40)
 
+    # ── 重复资金曲线告警 ──
+    # 多个策略逐日净值完全相同 = 它们跑的是同一份信号，累计收益率必然一样。
+    # 这类"克隆策略"会污染横向比较，必须在推送里显式点出来。
+    dups = find_duplicate_curve_groups(strategies)
+    if dups:
+        lines.append(f"⚠️ 重复资金曲线 {len(dups)} 组（累计收益率逐日完全相同）")
+        for names in dups:
+            lines.append(f"  · {' / '.join(names)}")
+        lines.append("  → 请检查这些策略的 signal_func 是否接成了同一个")
+        lines.append("")
+
     if pipeline_info:
         total = pipeline_info.get("total", 0)
         ok = pipeline_info.get("ok", 0)
@@ -358,6 +391,14 @@ def push_strategy_summary(
     """读取状态 → 计算指标 → 格式化 → 推送一条汇总微信。"""
     strategies = build_strategy_summary(output_dir)
     text = format_summary_text(strategies, pipeline_info)
+
+    # 同步打到管线日志——推送正文不落盘，出问题时这里才有据可查
+    dups = find_duplicate_curve_groups(strategies)
+    if dups:
+        print(f"  ⚠️ 重复资金曲线 {len(dups)} 组：")
+        for names in dups:
+            print(f"     · {' / '.join(names)}")
+
     today = datetime.now().strftime("%Y-%m-%d")
     title = f"📊 ETF模拟盘汇总 | {today}"
     return send_message_fn(title, text)

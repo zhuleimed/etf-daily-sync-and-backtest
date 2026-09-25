@@ -1,0 +1,209 @@
+# 候选策略信号接线修复（2026-09-25）
+
+> 起因：用户发现"各策略的累积收益率似乎一直未变动"。
+> 结论：**8 个候选策略的实盘 daily.py 是同一模板复制出来的，全部调用动量轮动的
+> 信号函数，从未调用自己的选股逻辑**，因此 7 个策略产出逐日完全相同的资金曲线。
+
+---
+
+## 一、症状与排查
+
+日报/推送/管线本身都正常（逐日回放验证：6 个交易日里 20/21 个策略数值每天变化）。
+真正不动的是"策略之间没有区别"：
+
+```
+❽ 布林带回归      累计-3% 年化-17% 夏普-1.21 回撤-5%  启动2026-07-23 胜率46% 39天 | 📈 510050×3200
+❾ 中位数#2        累计-3% 年化-17% 夏普-1.21 回撤-5%  …… （下面 5 条逐字相同，只有名字不同）
+❿ Sharpe排名      ……
+11. Sortino排名    ……
+12. 价差回归       ……
+13. 尾部风险轮动   ……
+14. 量价配合       ……
+```
+
+### 证据链
+
+| # | 证物 | 结果 |
+|---|------|------|
+| 1 | 7 个 `state_*.json` | `cash=254.8963153900022`、`total_value=9723.696315390003`、`avg_cost=2.9689`、`cumulative_pnl=-244.654…` **逐字节相同** |
+| 2 | 7 个 `sim_log_*.csv` | 除「策略」名列外**全列相同，自 2026-07-23 建仓首行起** |
+| 3 | 7 个 `simulation/strategies/*/daily.py` | diff 仅差 docstring / `SNAME` / logger 名 / state id |
+| 4 | 7 个 `strategies/*/config.py` 解析值 | `MOMENTUM_WINDOW=20`、`MIN_SWITCH_CONVICTION=0.03`、`MIN_HOLD_DAYS=10`、`RISK_MODE=A`、同一 7 只 ETF 池，全部一致 |
+| 5 | 反证：`dual_momentum` | 同一模板但 `MOMENTUM_WINDOW=15` → 曲线立刻不同。证明"共用信号函数"是唯一充分原因 |
+
+---
+
+## 二、根因（精确定位）
+
+**不是"这些策略没有自己的逻辑"——恰恰相反，每个策略在回测侧都有各自独立的引擎。**
+
+```
+strategies/<名字>/engine.py    ← 各自的选股逻辑，真实且互不相同
+    bollinger_reversion : 价格跌破布林带下轨才买（PctB < 0.2），跌破越深权重越大
+    spread_reversion    : 横向比较 7 只累计涨幅，偏离平均越大越少配
+    median_momentum     : 动量排名买第 2 名（RANK_POSITION=2）
+    sharpe_ranking      : 涨幅 ÷ 年化总波动率
+    sortino_ranking     : 涨幅 ÷ 年化下行波动率
+    tail_risk           : 沪深300 急跌/波动飙升 → 切最低波动 ETF
+    volume_price        : 动量 + 量比过滤（量比<1.2 不参与）
+    dual_momentum       : 绝对动量（价 > SMA30）+ 相对动量（窗口15）
+```
+
+出问题的是**实盘那一层**：`simulation/strategies/<名字>/daily.py` 全部写死
+
+```python
+from strategies.momentum_rotation.momentum_signals import compute_momentum_signals, rank_etfs_by_momentum
+...
+signal_func=compute_momentum_signals, rank_func=rank_etfs_by_momentum,
+```
+
+即"每天开盘前问该买谁"问的是动量轮动那个大脑。7 个人共用一个大脑 → 动作相同 → 净值相同。
+
+**代码与自己的设计意图相反**：`pipeline.py:177` 的注释写着
+`# ═══ 新纳入: 机制独立于纯动量的候选策略 ═══`，而实际行为是它们全都跑动量信号。
+
+对照正确接线的写法（一直是这个约定）：
+
+```python
+from strategies.adx_trend_rotation.momentum_signals import compute_adx_signals
+from strategies.composite_momentum.momentum_signals import compute_composite_signals
+```
+
+> 注意区分：`momentum_vol_filter`（波动率过滤轮动）**不在本次修复范围内**。
+> 它同样调用 `compute_momentum_signals`，但那是**设计如此**——它的回测引擎也以动量
+> 为基座再叠波动率覆写，实盘与回测自洽。本次修的是"回测有各自逻辑、实盘没接上"。
+
+### 与 2026-09-05 审计的关系（更正）
+
+`REPAIR_BT_20260905.md` 附录取把这批策略归为
+「滞后轮动单标的β盘(≈-2%) …… ⇒ 动量固有成本，**非框架bug**」。
+那次抓到了**症状**（表现像动量β），归因错了：不是"这些机制恰好共享动量暴露"，
+而是**实盘根本没接它们自己的机制**。本次更正。
+
+---
+
+## 三、修复动作
+
+| 动作 | 文件 |
+|------|------|
+| ① 为 8 个策略各写信号函数（从各自回测引擎逐行移植） | `strategies/<名字>/momentum_signals.py` ×8（新增） |
+| ② 接线：daily.py 改用自己的信号函数 | `simulation/strategies/<名字>/daily.py` ×8 |
+| ③ 补出 daily 需要的常量（`BB_PERIOD`/`VOL_WINDOW`/`LOOKBACK`/`ABS_MA`…） | `simulation/strategies/<名字>/config.py` ×8 |
+| ④ 历史仓位清零 + CSV 断点注释行 | `simulation/output/state_*.json`、`sim_log_*.csv` ×8 |
+| ⑤ 汇总加"重复资金曲线"巡检 | `simulation/framework/summary.py` |
+| ⑥ 修 `adaptive_rotation` 显示 bug + 阈值半接线 | `log_writer.py`、`strategies/adaptive_rotation/signals.py` |
+
+### 为什么要清零（④）
+
+8 个策略自 2026-07-23 起持有的仓位与累计盈亏是**动量逻辑**产生的，不代表新逻辑。
+清零后在 CSV 写一条含「清零重启」关键字的注释行作为收益断点。
+关键字不能省——下游两处依赖它：
+
+- `summary._compute_metrics`：从最后一个 `【` 注释行之后重新计算绩效指标
+- `backtest_align`：识别收益断点，避免与回测对齐时产生系统性假偏差
+
+同日 `adaptive_rotation` 另修两处（见第六节）。
+
+---
+
+## 四、验证（三层，全部通过）
+
+### 第 1 层：逐日选股与原回测引擎一致
+
+`python -m simulation.analysis.verify_signal_ports`
+
+用 `object.__new__(XxxEngine)` 绕过 `__init__`，直接调用引擎的**真实私有方法**
+（`_pct_b` / `_score` / `_check_tail` / `_above_ma`），避免"自己抄自己"的假验证：
+
+```
+① 布林带回归   一致 60/60      ⑤ 价差回归     一致 60/60
+② 中位数#2     一致 60/60      ⑥ 尾部风险     一致 60/60  (区间内触发 10 次)
+③ Sharpe      一致 60/60      ⑦ 量价配合     一致 60/60
+④ Sortino     一致 60/60      ⑧ 双动量       一致 60/60
+```
+
+### 第 2 层：选股结果已分化
+
+同一交易日，8 个策略给出 **5 种不同结果**（原来全一样）：
+
+```
+bollinger_reversion → 563000      sharpe_ranking  → 512100
+median_momentum     → 510050      sortino_ranking → 512100
+spread_reversion    → 510300      tail_risk       → 512100
+volume_price        → 510050      dual_momentum   → None（全部跌破SMA30→空仓，符合双动量本意）
+```
+
+### 第 3 层：真实引擎集成
+
+用临时目录跑完整 `run_daily`（不触碰实盘状态）：**8/8 跑通**，且信号已分化
+（bollinger/spread 给出 `open_pending`，其余 `hold_cash`）。
+
+### 下游校验
+
+- 重复曲线巡检：修复后检出 **0 组**（修复前检出 1 组 7 个）
+- 断点锚定：模拟今晚追加 09-25 真实行后，`backtest_align` 锚点正确落在 `2026-09-25`
+
+---
+
+## 五、已知局限（诚实记录）
+
+1. **单标的归约**：`DailySimEngine` 是"单标的持有"结构（这些策略的模拟盘配置本就是
+   `TOP_N=1`）。`bollinger_reversion` 与 `spread_reversion` 的原回测是**多标的加权组合**
+   （后者更是永远满仓、同时持有全部 7 只），移植时收敛为"取权重最大的那一只"，
+   保留了排序但丢掉了分散度。若要完整还原，需改造成"独立多标的策略"
+   （不走 DailySimEngine），属另一项工作。
+2. **`spread_reversion` 的权重函数本身较特殊**：越贴近 7 只平均仓位越重，偏离越大仓位越小。
+   单标的版本即"永远持有最贴近平均的那只"，与原策略"从不空仓"的特征一致。
+3. **`tail_risk` 回测端的分支从未触发过**：其引擎 `__init__` 把 `hs300_data` 硬编码为
+   `None`，`_check_tail` 恒返回 False → 回测里它退化成纯动量。本次移植**接通了**该分支
+   （读 `index_daily` 表的真实沪深300），因此实盘行为会与旧回测结果不同——这是修正，
+   不是走样。**建议另行修回测端**（给 `hs300_data` 加参数并加载），本次未动回测代码。
+
+---
+
+## 六、附带修复
+
+### `adaptive_rotation` 41 天零交易（排查结论：非崩溃）
+
+- **熊市日**（占 46%）：设计上强制全 0 分、空仓，正确。
+- **震荡日**（占 54%）：均值回归需同时满足 `RSI<35` 且 `%B<0`。逐日扫描：自 2026-08-03
+  起 36 个交易日内该组合**仅出现 1 次**（2026-09-15，且当天是熊市日被门禁挡掉）。
+  回测侧（2026 年 1–7 月）有 10 次切换，机制本身没坏，只是当前市场安静 + 长期在 MA60 下方。
+
+修复两处：
+
+1. **`持有 []` 显示 bug**：引擎 `action` 默认值是 `"hold"`，空仓日也保留该值，
+   CSV「操作」列渲染成 `持有 []`。现空仓时显示`空仓，无买入信号`（与推送口径一致）。
+2. **阈值半接线**：`%B` 分量原写作 `(-pct_b)`，等于把阈值硬编码成 0，而 `RSI` 分量却
+   正确使用了自己的阈值 → `REV_OVERSOLD_PCT_B` 形同虚设（调大它，通过筛除的标的
+   仍会被 clip 成 0 分）。现两个分量都相对各自阈值计算。
+   **当前阈值 0.0，两种写法逐点等价（20001 点验证），不改变任何历史结果。**
+
+⚠️ **阈值的取值本身（0.0）未改动**——属策略行为变更，需回测对比 + 用户决策。
+
+---
+
+## 七、回退方法
+
+```bash
+# 状态与 CSV：重置前已备份
+ls simulation/output/backup_pre_rewire_20260925_101219/
+# 代码：git revert 对应提交即可（新增的 momentum_signals.py 直接删除）
+```
+
+`dual_momentum` 虽不在此前报告的"7 个"里，但缺陷完全相同（同一模板、同样调用动量信号，
+只是窗口不同），一并修复。
+
+---
+
+## 八、沉淀
+
+**排查套路（可复用）**：
+
+1. 多策略数值完全相同 → 先比 `state_*.json` 原始值（不要比四舍五入后的展示值），
+   浮点逐位相同即证明同一份状态。
+2. `diff` 掉名字列再比 CSV 全列，比"看数字像不像"可靠。
+3. **别停在"它们表现像同一个策略"**——要查到 `signal_func` 这一层。
+   回测有各自逻辑 ≠ 实盘接上了各自逻辑。
+4. 新增策略时检查 `daily.py` 的 `signal_func` / `rank_func` 指向谁；
+   汇总里的"重复资金曲线"巡检会自动兜住这类问题。
