@@ -66,23 +66,28 @@ def _stats(nav: pd.Series, lo: str, hi: str) -> dict | None:
             "mdd": float(np.min(v / peak - 1) * 100), "n": len(v)}
 
 
+def breadth_series(dates: pd.DatetimeIndex, ma_period: int = 20) -> pd.Series:
+    """市场宽度（7 宽基中 close>MA(N) 的占比）——只用当日及之前数据。"""
+    lo = (dates[0] - timedelta(days=400)).strftime("%Y-%m-%d")
+    etf, _ = load_all_etf_data(symbols=C.ETF_SYMBOLS, start_date=lo,
+                               end_date=dates[-1].strftime("%Y-%m-%d"), db_path=C.DB_PATH)
+    d0 = etf[C.ETF_SYMBOLS[0]]["date"]
+    dmap = {str(d)[:10]: i for i, d in enumerate(d0)}
+    out = {}
+    for d in dates:
+        i = dmap.get(str(d)[:10])
+        if i is not None:
+            out[d] = compute_breadth(etf, i, ma_period)
+    return pd.Series(out)
+
+
 def gate_signals(dates: pd.DatetimeIndex, port_ret: pd.Series) -> dict[str, pd.Series]:
     """三个闸门信号（True=风险态）。全部只用 t 及之前的数据，使用方再滞后一天。"""
     lo = (dates[0] - timedelta(days=400)).strftime("%Y-%m-%d")
     signals = {}
 
     # ① 宽度闸：7 宽基 close>MA20 占比
-    etf, _ = load_all_etf_data(symbols=C.ETF_SYMBOLS, start_date=lo,
-                               end_date=dates[-1].strftime("%Y-%m-%d"), db_path=C.DB_PATH)
-    d0 = etf[C.ETF_SYMBOLS[0]]["date"]
-    dmap = {str(d)[:10]: i for i, d in enumerate(d0)}
-    br = {}
-    for d in dates:
-        i = dmap.get(str(d)[:10])
-        if i is not None:
-            br[d] = compute_breadth(etf, i, 20)
-    breadth = pd.Series(br)
-    signals["宽度闸(<30%)"] = breadth < BREATH_WEAK
+    signals["宽度闸(<30%)"] = breadth_series(dates) < BREATH_WEAK
 
     # ② HS300 闸：指数 close < MA10
     with sqlite3.connect(f"file:{C.DB_PATH}?mode=ro", uri=True) as c:
@@ -100,25 +105,37 @@ def gate_signals(dates: pd.DatetimeIndex, port_ret: pd.Series) -> dict[str, pd.S
     return signals
 
 
+def build_experiment(start: str = FULL[0], end: str = FULL[1]):
+    """装载实验数据：返回 (R, r_base, signals)。供本脚本与稳健性验证脚本共用。"""
+    R_raw, src, note = collect_sleeves(start, end, run_missing=True)
+    R = R_raw[(R_raw.index >= start) & (R_raw.index <= end)]
+    for sid, why in note.items():
+        print(f"  ⚠ 跳过 {sid}: {why}")
+    if R.shape[1] < 5:
+        raise RuntimeError(f"可用 sleeve 不足（{R.shape[1]} 条）")
+    print(f"  sleeve {R.shape[1]} 条 × {R.shape[0]} 天"
+          f"（{R.index[0].date()} → {R.index[-1].date()}）")
+    nav_base = simulate_portfolio(R, "rp")
+    r_base = nav_base.pct_change().fillna(0.0)
+    signals = gate_signals(R.index, r_base)
+    return R, r_base, signals
+
+
+def gated_nav(r_base: pd.Series, sig: pd.Series, expo: float) -> pd.Series:
+    """按闸门信号生成净值：风险态收益 = exposure × 组合收益（次日生效）。"""
+    s = sig.reindex(r_base.index).ffill().fillna(False).astype(float)
+    mult = (1 + s * (expo - 1)).shift(1).fillna(1.0)
+    return (1 + r_base * mult).cumprod()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true")
     a = ap.parse_args()
 
     print(f"═══ 方向 5：组合层总闸实验 | {FULL[0]} → {FULL[1]} ═══")
-    R_raw, src, note = collect_sleeves(FULL[0], FULL[1], run_missing=True)
-    R = R_raw[(R_raw.index >= FULL[0]) & (R_raw.index <= FULL[1])]
-    for sid, why in note.items():
-        print(f"  ⚠ 跳过 {sid}: {why}")
-    if R.shape[1] < 5:
-        print(f"⚠ 可用 sleeve 不足（{R.shape[1]} 条），终止")
-        return
-    print(f"  sleeve {R.shape[1]} 条 × {R.shape[0]} 天"
-          f"（{R.index[0].date()} → {R.index[-1].date()}）")
-
-    nav_base = simulate_portfolio(R, "rp")
-    r_base = nav_base.pct_change().fillna(0.0)
-    signals = gate_signals(R.index, r_base)
+    R, r_base, signals = build_experiment()
+    nav_base = (1 + r_base).cumprod()
 
     rows = [("基线·无闸门", None, 1.0)]
     for name, sig in signals.items():
@@ -128,13 +145,13 @@ def main():
     print(f"\n{'方案':<24}{'期间':<12}{'收益%':>9}{'夏普':>7}{'MDD%':>8}{'风险态天数':>10}")
     table = {}
     for label, sig, expo in rows:
-        mult = pd.Series(1.0, index=R.index)
-        if sig is not None:
-            s = sig.reindex(R.index).ffill().fillna(False).astype(float)
-            mult = (1 + s * (expo - 1)).shift(1).fillna(1.0)   # 次日生效
-        nav = (1 + r_base * mult).cumprod()
+        nav = gated_nav(r_base, sig, expo) if sig is not None else nav_base
         table[label] = {}
-        risk_days = int((mult < 1).sum())
+        if sig is None:
+            risk_days = 0
+        else:
+            s_ = sig.reindex(R.index).ffill().fillna(False).astype(float)
+            risk_days = int((s_.shift(1).fillna(0) > 0).sum())
         for plabel, (lo, hi) in [("熊市2022-23", BEAR), ("牛市2024-26", BULL), ("全周期", FULL)]:
             st = _stats(nav, lo, hi)
             table[label][plabel] = st
