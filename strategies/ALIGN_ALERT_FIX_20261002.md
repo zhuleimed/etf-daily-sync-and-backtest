@@ -125,3 +125,55 @@ pending 订单不变、`days_since_switch` 不多加、不写 CSV、报告无 `e
 | `simulation/framework/log_writer.py` | 跳过报告不写 CSV 行 |
 | `simulation/framework/report_builder.py` | 跳过报告一行渲染 |
 | `simulation/framework/backtest_align.py` | 判定重构（持仓/漂移）+ 边沿触发 + 解析修复 |
+
+---
+
+# 附篇：adx_trend_rotation 接线修复（2026-10-02 续）
+
+## 一、两条缺失的接线（逐条比对回测 `engine._make_decision`）
+
+| 回测规则 | 模拟盘修复前 | 修复 |
+|---|---|---|
+| ① 持仓 ADX 得分=0 → 平仓 | `exit_when_signal_dead` 默认 False → **只持有不退出** | 置 `True`（同 RSI 的 B011 修复） |
+| ② `regime==bear` 且 目标得分≤0.5 → 不开仓 | 信号函数**收不到 HS300**，regime 分支在模拟盘永远不触发 | 新增指数接线 + 引擎 `open_gate_func` 钩子 |
+
+后果：回测 666 天里 **346 天空仓（52%）**（ADX<25/空头主导就不持有），
+模拟盘却始终满仓 → 对齐监控看到"模拟盘持 512100 vs 回测空仓 29 天"。
+
+实现要点：指数接线做在**信号函数内部**（懒加载 + 每日刷新 regime），
+这样离线重放工具 `repair_bt` 直接 import 该函数即可忠实复现 live，不需要额外接线。
+
+## 二、验证（`simulation/analysis/verify_adx_wiring.py`，真实引擎离线重放）
+
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| 与 live CSV 逐日复现（harness 自检） | **42/42 天一致 ✓** | — |
+| 持仓与回测一致率（2026-08-03→09-30） | 31% | **100%** |
+| 累计缺口（同锚） | -3.27pp | **-0.05pp** |
+| 持仓一致率（2024-06-03→08-30 另一窗口） | 48% | 92% |
+| 触发计数 | 信号消失卖出 **0** 次 | **1** 次（分支确实会响应） |
+
+> 残留的 2024 年 8% 差异已定位到**回测自身的 bug**（见下），非模拟盘问题。
+
+## 三、顺带发现：回测的 regime 用的是过期半年多的数据（**待决策**）
+
+`judge_market_regime(index_data, idx, ...)` 用 `iloc[idx]` 取值，而
+`strategies/adx_trend_rotation/engine.py` 传进去的是 **ETF 数组的位置**：
+
+- ETF 数据起点 = `start_date`（2024-01-02），指数数据起点 = `start_date - 200天`（2023-06-15）
+- 指数比 ETF **早 134 个交易日** → 回测在 ETF 第 i 天取的是指数第 i 行 = **约 6.5 个月前的行情**
+
+实测：回测记录的 regime 与"按日期取"的 regime **在 435/666 天不同**（复算逐日吻合，确证）。
+影响面：adx 只把它用在开仓闸门上 → 闸门绑定天数 旧口径 5 天 vs 正确口径 1 天（3 年），
+**对 adx 历史绩效影响极小**；但同一写法还出现在
+`rsi_trend_rotation / macd_trend_rotation / composite_momentum / mean_reversion_rotation`
+的回测引擎里（影响面未评估）。
+
+模拟盘这边**按设计意图实现（按日期取当日 regime）**，不回放这个 bug。
+是否回修回测（5 行对齐代码）待定——修回测会改动已"验证过"的历史结果。
+
+## 四、下一个交易日的实际动作（10-09）
+
+adx 模拟盘当前持 512100（3100 股，成本 3.17，浮亏约 -6%），而 ADX 得分已归零：
+修复上线后 **10-09 产生"持仓信号消失"卖出信号 → 10-10 开盘卖出**（回测自 8 月起就空仓）。
+这是设计内行为，不是异常。

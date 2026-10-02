@@ -53,7 +53,8 @@ DB_PATH = PROJECT_ROOT / "data" / "etf_daily.db"
 CAL_AHEAD = 2            # end 后多取几天，确保末行在区间
 
 # live 终端累计(对应 sim_log_{sid}.csv 末行, 自 08-03 清零重基)
-LIVE_REF = {"momentum_rotation": -3.76, "macd_trend_rotation": -7.58}
+LIVE_REF = {"momentum_rotation": -3.76, "macd_trend_rotation": -7.58,
+            "adx_trend_rotation": -6.17}
 
 # 策略常量快速访问(懒 import)
 def _cfg(sid):
@@ -67,12 +68,27 @@ def _signal_rank(sid):
             compute_momentum_signals, rank_etfs_by_momentum,
         )
         return compute_momentum_signals, rank_etfs_by_momentum
+    if sid == "adx_trend_rotation":
+        # 直接取 live daily.py 的信号函数：它自带 index/regime 接线（2026-10-02），
+        # 重放才与 live 一致（getattr 口径见 _open_gate）
+        from simulation.strategies.adx_trend_rotation.daily import (
+            compute_adx_signals, rank_etfs_by_adx,
+        )
+        return compute_adx_signals, rank_etfs_by_adx
     from strategies.macd_trend_rotation.momentum_signals import rank_etfs_by_macd
 
     def macd_sig(etf, idx, *a):
         from strategies.macd_trend_rotation.momentum_signals import compute_macd_scores
         return compute_macd_scores(etf, idx)
     return macd_sig, rank_etfs_by_macd
+
+
+def _open_gate(sid):
+    """策略侧开仓闸门（live daily.py 同款；未接线返回 None=无闸门）。"""
+    if sid == "adx_trend_rotation":
+        from simulation.strategies.adx_trend_rotation.daily import adx_open_gate
+        return adx_open_gate
+    return None
 
 
 # ── 数据(只读绝对区间，recipe 同 load_latest_data) ──
@@ -127,10 +143,19 @@ def _isolation(tmp: str):
     sim_db._DEFAULT_DB_PATH = str(Path(tmp) / "sim_trading_replay.db")
 
 
-def _new_engine(sid, state_mgr, tmp, *, confirm, cooldown, risk_mode):
+def _new_engine(sid, state_mgr, tmp, *, confirm, cooldown, risk_mode,
+                signal_dead=None, use_gate=None):
+    """构造引擎（默认与 live daily.py 同款接线）。
+
+    signal_dead/use_gate: None=按 live（config 的 EXIT_WHEN_SIGNAL_DEAD / 策略模块闸门）；
+    False=显式关闭该杠杆（用于复现修复前的历史 live 行为做 harness 自检）。
+    """
     cfg = _cfg(sid)
     _isolation(tmp)
     signal_func, rank_func = _signal_rank(sid)
+    if signal_dead is None:
+        signal_dead = bool(getattr(cfg, "EXIT_WHEN_SIGNAL_DEAD", False))
+    gate_fn = _open_gate(sid) if use_gate in (None, True) else None
     broker = SimBroker(state_mgr, commission_rate=cfg.COMMISSION_RATE, slippage=cfg.SLIPPAGE)
     return DailySimEngine(
         state_mgr=state_mgr, broker=broker, config={"initial_capital": cfg.INITIAL_CAPITAL},
@@ -141,6 +166,7 @@ def _new_engine(sid, state_mgr, tmp, *, confirm, cooldown, risk_mode):
         stop_loss_pct=cfg.STOP_LOSS_PCT, profit_threshold=cfg.PROFIT_THRESHOLD,
         drawback_pct=cfg.DRAWBACK_PCT, drawdown_threshold=cfg.DRAWDOWN_THRESHOLD,
         confirm_days=confirm, risk_exit_reentry_cooldown=cooldown,
+        exit_when_signal_dead=bool(signal_dead), open_gate_func=gate_fn,
     ), broker
 
 

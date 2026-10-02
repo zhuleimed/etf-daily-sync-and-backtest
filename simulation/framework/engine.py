@@ -102,6 +102,7 @@ class DailySimEngine:
         drawdown_threshold: float = 0.15,
         exit_when_signal_dead: bool = False,
         switch_threshold_func: Optional[Callable] = None,
+        open_gate_func: Optional[Callable] = None,
         confirm_days: int = 1,
         risk_exit_reentry_cooldown: int = 0,
     ):
@@ -121,6 +122,10 @@ class DailySimEngine:
         # 自定义切换阈值函数（momentum, target, current)->float，
         # None=用绝对差 min_switch_conviction（默认行为不变）
         self.switch_threshold_func = switch_threshold_func
+        # 开仓闸门（策略特化）：func(momentum, target_etf) -> bool，False=本次不开仓。
+        # None=无闸门（默认，行为不变）。ADX 用它实现回测"熊市且目标得分≤0.5 不开仓"
+        # 规则（2026-10-02）。只作用于空仓开仓；不改变持仓时的切换/卖出。
+        self.open_gate_func = open_gate_func
         self.stop_loss_pct = stop_loss_pct
         self.profit_threshold = profit_threshold
         self.drawback_pct = drawback_pct
@@ -364,8 +369,13 @@ class DailySimEngine:
 
         elif not has_position:
             if target_etf is not None and not pd.isna(target_mom) and target_mom > 0:
-                report["signal"] = "open_pending"
-                report["signal_target"] = target_etf
+                # 开仓闸门（策略特化，默认无）：如 ADX 熊市且目标得分不足 → 不建仓
+                if self.open_gate_func is not None and not self.open_gate_func(momentum, target_etf):
+                    report["signal"] = "hold_cash"
+                    report["signal_note"] = "开仓闸门未通过，本次不建仓"
+                else:
+                    report["signal"] = "open_pending"
+                    report["signal_target"] = target_etf
             else:
                 report["signal"] = "hold_cash"
 

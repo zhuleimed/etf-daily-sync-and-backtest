@@ -18,6 +18,14 @@ STRATEGY_NAME = "ADX趋势强度模拟盘"
 RISK_MODE = "A"
 MOMENTUM_WINDOW = 20  # 给 DailySimEngine 用（实际ADX策略不使用）
 
+# ── 与回测引擎对齐的两处接线（2026-10-02 修复，详见 strategies/ALIGN_ALERT_FIX_20261002.md）──
+# ① 持仓 ADX 得分归零 → 平仓。回测 _make_decision 第一条规定"得分=0 平仓"，
+#    模拟盘此前一直是默认 False（只持有不退出）→ 回测 52% 交易日空仓、模拟盘却常满仓。
+EXIT_WHEN_SIGNAL_DEAD = True
+# ② 熊市开仓闸门：回测"regime==bear 且 目标得分<=0.5 → 不开仓"（仅限空仓开仓）。
+#    ADX_MIN_STRENGTH 之上还有这层更严的门槛，模拟盘此前完全看不到 regime。
+BEAR_OPEN_MIN_SCORE = 0.5
+
 # 风控参数（RISK_MODE保持A，这些不生效但对DailySimEngine构造函数必填）
 STOP_LOSS_PCT = 0.05
 PROFIT_THRESHOLD = 0.10

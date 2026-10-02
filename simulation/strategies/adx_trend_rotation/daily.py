@@ -33,13 +33,21 @@ from simulation.strategies.adx_trend_rotation.config import (
     MIN_HOLD_DAYS, COMMISSION_RATE, SLIPPAGE, DB_PATH, INITIAL_CAPITAL,
     RISK_MODE, STOP_LOSS_PCT, PROFIT_THRESHOLD, DRAWBACK_PCT,
     DRAWDOWN_THRESHOLD, STRATEGY_NAME, STATE_FILE_DIR,
+    MARKET_INDEX, MARKET_MA_PERIOD,        # regime 判定（2026-10-02 接线）
+    EXIT_WHEN_SIGNAL_DEAD, BEAR_OPEN_MIN_SCORE,
 )
 
 from strategies.adx_trend_rotation.momentum_signals import (
-    compute_adx_scores, rank_etfs_by_adx,
+    compute_adx_scores, rank_etfs_by_adx, judge_market_regime,
 )
 
 logger = logging.getLogger("adx_trend_sim")
+
+# ── 全局缓存：沪深300指数数据 + 今日市场状态（供开仓闸门使用）──
+# 2026-10-02 修复：回测按 HS300 MA60 判断牛熊并在熊市收紧开仓，
+# 模拟盘此前完全收不到指数数据（同 tail_risk hs300_data=None 类接线缺失）。
+_index_data: pd.DataFrame | None = None
+_regime_today: dict | None = None
 
 
 def compute_adx_signals(
@@ -47,8 +55,110 @@ def compute_adx_signals(
     today_idx: int,
     momentum_window: int = 20,
 ) -> pd.Series:
-    """ADX评分信号（兼容DailySimEngine接口）。"""
+    """ADX评分信号（兼容DailySimEngine接口）。
+
+    附带刷新市场状态（HS300 MA60）——开仓闸门 adx_open_gate 依赖它。
+    自包含（懒加载指数数据）是为了让离线重放工具 simulation.analysis.repair_bt
+    直接 import 本函数即可忠实复现 live 行为，无需额外接线。
+    """
+    signal_day = _signal_day(etf_data, today_idx)
+    if signal_day:
+        _ensure_index(signal_day)
+        refresh_regime(signal_day)
     return compute_adx_scores(etf_data, today_idx)
+
+
+def _signal_day(etf_data: dict[str, pd.DataFrame], today_idx: int) -> str | None:
+    """从行情数据取今日日期（YYYY-MM-DD）。"""
+    for df in etf_data.values():
+        if today_idx < len(df):
+            return str(pd.Timestamp(df.iloc[today_idx]["date"]).date())
+    return None
+
+
+def adx_open_gate(momentum: pd.Series, target_etf: str) -> bool:
+    """开仓闸门（与回测 _make_decision 同款）：熊市且目标得分<=0.5 → 不开仓。
+
+    回测规则："if regime == 'bear' and target_score <= 0.5: return"（仅作用于空仓开仓，
+    不影响持仓切换）。指数数据缺失时 regime 视为 neutral → 放行（与回测 index_data
+    为空时 judge_market_regime 返回 neutral 的行为一致）。
+    """
+    if _regime_today is None or _regime_today.get("regime") != "bear":
+        return True
+    score = momentum.get(target_etf, float("nan"))
+    if pd.isna(score) or score <= BEAR_OPEN_MIN_SCORE:
+        logger.info(
+            f"熊市闸门：目标 {target_etf} 得分 "
+            f"{'nan' if pd.isna(score) else f'{score:.4f}'} <= {BEAR_OPEN_MIN_SCORE}，不开仓"
+        )
+        return False
+    return True
+
+
+def _load_index_data(ref_day: str) -> pd.DataFrame | None:
+    """从 index_daily 读沪深300（自 ref_day 前 400 天起），与回测同源同口径。"""
+    import sqlite3
+    from datetime import datetime, timedelta
+    start_dt = (datetime.strptime(ref_day, "%Y-%m-%d") - timedelta(days=400)).strftime("%Y-%m-%d")
+    try:
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            df = pd.read_sql_query(
+                "SELECT date, close FROM index_daily WHERE symbol = ? AND date >= ? ORDER BY date",
+                conn, params=[MARKET_INDEX, start_dt],
+            )
+        if df.empty:
+            logger.warning(f"指数 {MARKET_INDEX} 数据为空，regime 判定退化为 neutral")
+            return None
+        df["date"] = pd.to_datetime(df["date"])
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        return df.reset_index(drop=True)   # judge_market_regime 用 iloc 位置索引
+    except Exception as e:
+        logger.warning(f"指数 {MARKET_INDEX} 加载失败，regime 判定退化为 neutral: {e}")
+        return None
+
+
+def _ensure_index(ref_day: str) -> None:
+    """指数数据懒加载（只加载一次，窗口覆盖后续所有交易日）。"""
+    global _index_data
+    if _index_data is None or _index_data.empty:
+        _index_data = _load_index_data(ref_day)
+        if _index_data is not None:
+            logger.info(f"指数 {MARKET_INDEX} 加载 {len(_index_data)} 行（MA{MARKET_MA_PERIOD} regime 用）")
+
+
+def load_etf_and_index_data(
+    symbols: list[str],
+    db_path: str | Path = DB_PATH,
+    lookback_days: int = 120,          # ADX需要约2×14+缓冲
+    momentum_window: int = MOMENTUM_WINDOW,
+) -> dict[str, pd.DataFrame]:
+    """加载 ETF 数据 + 沪深300指数数据（指数供开仓闸门用，写入全局缓存）。"""
+    etf_data = load_etf_data_with_buffer(
+        symbols, db_path=db_path,
+        lookback_days=lookback_days, momentum_window=momentum_window,
+    )
+    _ensure_index(date.today().isoformat())
+    return etf_data
+
+
+def refresh_regime(today_str: str) -> dict | None:
+    """按"今天"刷新全局 regime（口径与回测一致：用今日收盘算，不超前）。"""
+    global _regime_today
+    if _index_data is None or _index_data.empty:
+        _regime_today = None
+        return None
+    # 取日期 <= today 的最后一行位置（指数缺当日行时退化为最近一日）
+    mask = _index_data["date"] <= pd.Timestamp(today_str)
+    if not mask.any():
+        _regime_today = None
+        return None
+    pos = int(mask[mask].index[-1])
+    _regime_today = judge_market_regime(_index_data, pos, MARKET_MA_PERIOD)
+    logger.debug(
+        f"市场状态 {today_str}: {_regime_today['regime']}"
+        f"（HS300/MA{MARKET_MA_PERIOD} {_regime_today.get('ratio', 0):+.2%}）"
+    )
+    return _regime_today
 
 
 def load_etf_data_with_buffer(
@@ -78,6 +188,11 @@ def build_report(report: dict) -> list[str]:
     lines.append("  ===========================================")
     lines.append(f"  {STRATEGY_NAME} | {report.get('date', '')}")
     lines.append(f"  ===========================================")
+
+    # 市场状态（2026-10-02 接线）：熊市且目标得分<=0.5 时不开仓，见 config
+    if _regime_today:
+        lines.append(f"  【市场状态】{_regime_today['regime']}"
+                     f"（沪深300/MA{MARKET_MA_PERIOD} {_regime_today.get('ratio', 0):+.2%}）")
 
     execd = report.get("order_executed")
     blocked = report.get("order_blocked")
@@ -184,7 +299,7 @@ def main():
 
     # ADX需要更多历史数据（14×2+缓冲）
     lookback = 120
-    etf_data = load_etf_data_with_buffer(ETF_SYMBOLS, DB_PATH, lookback_days=lookback)
+    etf_data = load_etf_and_index_data(ETF_SYMBOLS, DB_PATH, lookback_days=lookback)
     if not etf_data:
         msg = "行情数据加载失败"
         logger.error(msg)
@@ -206,6 +321,11 @@ def main():
         push_daily_report(STRATEGY_NAME, [msg])
         return
 
+    # 市场状态（HS300 MA60）——开仓闸门用，口径与回测一致：用今日收盘算
+    _regime = refresh_regime(today_str)
+    if _regime:
+        logger.info(f"市场状态: {_regime['regime']}（HS300/MA{MARKET_MA_PERIOD} {_regime.get('ratio', 0):+.2%}）")
+
     state_mgr = StateManager(str(STATE_FILE_DIR), "adx_trend_rotation")
     broker = SimBroker(state_mgr, commission_rate=COMMISSION_RATE, slippage=SLIPPAGE)
     engine = DailySimEngine(
@@ -217,6 +337,8 @@ def main():
         momentum_window=MOMENTUM_WINDOW,
         min_switch_conviction=MIN_SWITCH_CONVICTION,
         min_hold_days=MIN_HOLD_DAYS,
+        exit_when_signal_dead=EXIT_WHEN_SIGNAL_DEAD,     # 回测①：得分归零→平仓
+        open_gate_func=adx_open_gate,                    # 回测②：熊市得分≤0.5 不开仓
         risk_mode=RISK_MODE,
         stop_loss_pct=STOP_LOSS_PCT,
         profit_threshold=PROFIT_THRESHOLD,
