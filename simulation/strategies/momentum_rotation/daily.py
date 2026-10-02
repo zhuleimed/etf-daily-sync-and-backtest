@@ -15,8 +15,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
-
 # ── 确保项目根目录在 path 中 ──
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
