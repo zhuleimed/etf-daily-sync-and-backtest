@@ -103,6 +103,7 @@ class DailySimEngine:
         exit_when_signal_dead: bool = False,
         switch_threshold_func: Optional[Callable] = None,
         open_gate_func: Optional[Callable] = None,
+        switch_gate_func: Optional[Callable] = None,
         confirm_days: int = 1,
         risk_exit_reentry_cooldown: int = 0,
     ):
@@ -126,6 +127,10 @@ class DailySimEngine:
         # None=无闸门（默认，行为不变）。ADX 用它实现回测"熊市且目标得分≤0.5 不开仓"
         # 规则（2026-10-02）。只作用于空仓开仓；不改变持仓时的切换/卖出。
         self.open_gate_func = open_gate_func
+        # 切换闸门（策略特化）：func(momentum, target_etf, hold_sym) -> bool，False=本次不切换。
+        # None=无闸门（默认，行为不变）。动量类用它实现回测"短期动量确认"（目标近5日
+        # 跌幅>0.5% 或动能衰减 → 不换，避免追跌），2026-10-02。
+        self.switch_gate_func = switch_gate_func
         self.stop_loss_pct = stop_loss_pct
         self.profit_threshold = profit_threshold
         self.drawback_pct = drawback_pct
@@ -397,8 +402,15 @@ class DailySimEngine:
                     threshold = self.min_switch_conviction
                 excess = target_mom - current_mom
                 if excess > threshold:
-                    report["signal"] = "switch_pending"
-                    report["signal_target"] = target_etf
+                    # 切换闸门（策略特化，默认无）：如动量类"短期动量确认"否决
+                    if self.switch_gate_func is not None and not self.switch_gate_func(
+                        momentum, target_etf, hold_sym
+                    ):
+                        report["signal"] = "hold"
+                        report["signal_note"] = "切换闸门未通过，本次不切换"
+                    else:
+                        report["signal"] = "switch_pending"
+                        report["signal_target"] = target_etf
                 else:
                     report["signal"] = "hold"
         else:

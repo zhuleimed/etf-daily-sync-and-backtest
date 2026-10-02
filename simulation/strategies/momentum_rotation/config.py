@@ -19,6 +19,7 @@ from strategies.momentum_rotation.config import (
     COMMISSION_RATE,
     SLIPPAGE,
     DB_PATH,
+    SHORT_TERM_MOMENTUM_CHECK,   # 短期动量确认（2026-10-02 接线，见 daily.py 切换闸门）
 )
 
 # ── 模拟盘特有配置 ──

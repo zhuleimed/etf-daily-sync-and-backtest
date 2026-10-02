@@ -15,6 +15,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 # ── 确保项目根目录在 path 中 ──
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -48,16 +50,52 @@ from simulation.strategies.momentum_rotation.config import (
     DRAWBACK_PCT,
     DRAWDOWN_THRESHOLD,
     STATE_FILE_DIR,
+    SHORT_TERM_MOMENTUM_CHECK,
 )
 
 from strategies.momentum_rotation.momentum_signals import (
     compute_momentum_signals,
     rank_etfs_by_momentum,
+    short_term_momentum_ok,
 )
 
 logger = logging.getLogger("momentum_rotation_sim")
 
 STRATEGY_NAME = "动量轮动模拟盘"
+
+# ── 信号上下文（供切换闸门使用，2026-10-02 接线）──
+# 回测 _make_decision_single 在切换前有一道"短期动量确认"：
+#   目标 ETF 近 5 日跌幅 ≤ -0.5% → 不换（避免追跌）；动能衰减（5日均涨 < 20日均涨）→ 不换。
+# 模拟盘此前完全没有这道门 → 09-15 换了 510050（近5日 -1.39%），回测没换，
+# 造成 11 个交易日的持仓偏离。上下文在信号函数里记录，离线重放 import 即忠实复现。
+_sig_ctx: dict = {}
+
+
+def compute_momentum_signals_live(
+    etf_data: dict,
+    today_idx: int,
+    momentum_window: int = 20,
+):
+    """live 信号入口：记录上下文后调用策略信号函数。"""
+    _sig_ctx["etf_data"] = etf_data
+    _sig_ctx["idx"] = today_idx
+    return compute_momentum_signals(etf_data, today_idx, momentum_window)
+
+
+def momentum_switch_gate(momentum, target_etf: str, hold_sym: str) -> bool:
+    """切换闸门：与回测"短期动量确认"同款（False=本次不切换）。
+
+    规则体在 strategies.momentum_rotation.momentum_signals.short_term_momentum_ok
+    （vol_filter 共用同一实现，避免两处抄写漂移）。
+    模拟盘口径：today_idx 即回测的 signal_idx（同一信息集），故 check_idx = today_idx。
+    """
+    etf_data, i = _sig_ctx.get("etf_data"), _sig_ctx.get("idx")
+    if etf_data is None or i is None:
+        return True
+    ok = short_term_momentum_ok(etf_data, i, momentum, target_etf, SHORT_TERM_MOMENTUM_CHECK)
+    if not ok:
+        logger.info(f"切换闸门：目标 {target_etf} 短期动量确认未通过（近5日弱势/动能衰减），不切换")
+    return ok
 
 
 def build_report(report: dict) -> list[str]:
@@ -224,12 +262,13 @@ def main():
         state_mgr=state_mgr,
         broker=broker,
         config={"initial_capital": INITIAL_CAPITAL},
-        signal_func=compute_momentum_signals,
+        signal_func=compute_momentum_signals_live,   # 记录上下文供切换闸门用
         rank_func=rank_etfs_by_momentum,
         etf_pool=ETF_POOL,
         momentum_window=MOMENTUM_WINDOW,
         min_switch_conviction=MIN_SWITCH_CONVICTION,
         min_hold_days=MIN_HOLD_DAYS,
+        switch_gate_func=momentum_switch_gate,       # 回测同款"短期动量确认"（2026-10-02）
         risk_mode=RISK_MODE,
         stop_loss_pct=STOP_LOSS_PCT,
         profit_threshold=PROFIT_THRESHOLD,

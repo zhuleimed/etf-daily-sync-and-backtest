@@ -64,10 +64,11 @@ def _cfg(sid):
 def _signal_rank(sid):
     """返回 (signal_func, rank_func)。live daily.py 同款导入。"""
     if sid == "momentum_rotation":
-        from strategies.momentum_rotation.momentum_signals import (
-            compute_momentum_signals, rank_etfs_by_momentum,
+        # 取 live daily.py 的入口（会记录切换闸门所需上下文，2026-10-02）
+        from simulation.strategies.momentum_rotation.daily import (
+            compute_momentum_signals_live, rank_etfs_by_momentum,
         )
-        return compute_momentum_signals, rank_etfs_by_momentum
+        return compute_momentum_signals_live, rank_etfs_by_momentum
     if sid == "adx_trend_rotation":
         # 直接取 live daily.py 的信号函数：它自带 index/regime 接线（2026-10-02），
         # 重放才与 live 一致（getattr 口径见 _open_gate）
@@ -88,6 +89,14 @@ def _open_gate(sid):
     if sid == "adx_trend_rotation":
         from simulation.strategies.adx_trend_rotation.daily import adx_open_gate
         return adx_open_gate
+    return None
+
+
+def _switch_gate(sid):
+    """策略侧切换闸门（live daily.py 同款；未接线返回 None=无闸门）。"""
+    if sid == "momentum_rotation":
+        from simulation.strategies.momentum_rotation.daily import momentum_switch_gate
+        return momentum_switch_gate
     return None
 
 
@@ -144,11 +153,11 @@ def _isolation(tmp: str):
 
 
 def _new_engine(sid, state_mgr, tmp, *, confirm, cooldown, risk_mode,
-                signal_dead=None, use_gate=None):
+                signal_dead=None, use_gate=None, use_switch_gate=None):
     """构造引擎（默认与 live daily.py 同款接线）。
 
-    signal_dead/use_gate: None=按 live（config 的 EXIT_WHEN_SIGNAL_DEAD / 策略模块闸门）；
-    False=显式关闭该杠杆（用于复现修复前的历史 live 行为做 harness 自检）。
+    signal_dead/use_gate/use_switch_gate: None=按 live（config 的 EXIT_WHEN_SIGNAL_DEAD /
+    策略模块闸门）；False=显式关闭该杠杆（用于复现修复前的历史 live 行为做 harness 自检）。
     """
     cfg = _cfg(sid)
     _isolation(tmp)
@@ -156,6 +165,7 @@ def _new_engine(sid, state_mgr, tmp, *, confirm, cooldown, risk_mode,
     if signal_dead is None:
         signal_dead = bool(getattr(cfg, "EXIT_WHEN_SIGNAL_DEAD", False))
     gate_fn = _open_gate(sid) if use_gate in (None, True) else None
+    sw_gate_fn = _switch_gate(sid) if use_switch_gate in (None, True) else None
     broker = SimBroker(state_mgr, commission_rate=cfg.COMMISSION_RATE, slippage=cfg.SLIPPAGE)
     return DailySimEngine(
         state_mgr=state_mgr, broker=broker, config={"initial_capital": cfg.INITIAL_CAPITAL},
@@ -167,6 +177,7 @@ def _new_engine(sid, state_mgr, tmp, *, confirm, cooldown, risk_mode,
         drawback_pct=cfg.DRAWBACK_PCT, drawdown_threshold=cfg.DRAWDOWN_THRESHOLD,
         confirm_days=confirm, risk_exit_reentry_cooldown=cooldown,
         exit_when_signal_dead=bool(signal_dead), open_gate_func=gate_fn,
+        switch_gate_func=sw_gate_fn,
     ), broker
 
 

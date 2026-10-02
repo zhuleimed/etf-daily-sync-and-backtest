@@ -217,3 +217,35 @@ def determine_signals(
             f"维持 {current_holding}：超额收益={excess_return:.4f} "
             f"≤ 摩擦成本={friction_cost:.4f}"
         )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  切换前置检查：短期动量确认（2026-10-02 提取为共享函数）
+# ═══════════════════════════════════════════════════════════════
+
+def short_term_momentum_ok(
+    etf_data: Dict[str, pd.DataFrame],
+    date_idx: int,
+    momentum_series: pd.Series,
+    target_etf: str,
+    enabled: bool = True,
+) -> bool:
+    """回测"短期动量确认"闸门：True=允许切换到目标，False=否决（避免追跌）。
+
+    与 momentum_rotation / momentum_vol_filter 回测引擎 _make_decision_single 里的
+    内联规则同款（那两处仍是内联副本，未改动已验证的回测代码）：
+      - 目标 ETF 近 5 日跌幅 ≤ -0.5%  → 否决（刚大跌不接手）
+      - 目标动能衰减（近5日均涨 < 20日均涨，且 20日动量为正）→ 否决
+    """ 
+    if not enabled or date_idx < 6:
+        return True
+    df = etf_data.get(target_etf)
+    if df is None or date_idx >= len(df):
+        return True
+    tgt_5d = df.iloc[date_idx]["close"] / df.iloc[date_idx - 5]["close"] - 1
+    if tgt_5d <= -0.005:
+        return False
+    tgt_20d = momentum_series.get(target_etf, np.nan)
+    if not pd.isna(tgt_20d) and tgt_20d > 0 and tgt_5d / 5 < tgt_20d / 15:
+        return False
+    return True

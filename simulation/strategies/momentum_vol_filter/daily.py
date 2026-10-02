@@ -37,13 +37,37 @@ from simulation.strategies.momentum_vol_filter.config import (
     MIN_SWITCH_CONVICTION, MIN_HOLD_DAYS,
     RISK_MODE, STOP_LOSS_PCT, PROFIT_THRESHOLD, DRAWBACK_PCT,
     DRAWDOWN_THRESHOLD, STRATEGY_NAME, STATE_FILE_DIR,
+    SHORT_TERM_MOMENTUM_CHECK,
 )
 
 from strategies.momentum_rotation.momentum_signals import (
-    compute_momentum_signals, rank_etfs_by_momentum,
+    compute_momentum_signals, rank_etfs_by_momentum, short_term_momentum_ok,
 )
 
 logger = logging.getLogger("vol_filter_sim")
+
+# ── 信号上下文 + 切换闸门（2026-10-02 接线，与回测"短期动量确认"对齐）──
+# 回测 engine._make_decision_single：目标 ETF 近5日跌幅≤-0.5% 或动能衰减 → 不换。
+# 模拟盘此前没有这道门 → 09-15 与 momentum 同日换入 510050，回测没换。
+_sig_ctx: dict = {}
+
+
+def compute_momentum_signals_live(etf_data, today_idx, momentum_window=20):
+    """live 信号入口：记录上下文后调用策略信号函数（供切换闸门使用）。"""
+    _sig_ctx["etf_data"] = etf_data
+    _sig_ctx["idx"] = today_idx
+    return compute_momentum_signals(etf_data, today_idx, momentum_window)
+
+
+def momentum_switch_gate(momentum, target_etf: str, hold_sym: str) -> bool:
+    """切换闸门：与回测"短期动量确认"同款（False=本次不切换）。"""
+    etf_data, i = _sig_ctx.get("etf_data"), _sig_ctx.get("idx")
+    if etf_data is None or i is None:
+        return True
+    ok = short_term_momentum_ok(etf_data, i, momentum, target_etf, SHORT_TERM_MOMENTUM_CHECK)
+    if not ok:
+        logger.info(f"切换闸门：目标 {target_etf} 短期动量确认未通过（近5日弱势/动能衰减），不切换")
+    return ok
 
 
 def is_high_volatility(etf_benchmark: pd.DataFrame | None, today_idx: int) -> bool:
@@ -142,12 +166,13 @@ def main():
         state_mgr=state_mgr,
         broker=broker,
         config={"initial_capital": INITIAL_CAPITAL},
-        signal_func=compute_momentum_signals,
+        signal_func=compute_momentum_signals_live,   # 记录上下文供切换闸门用
         rank_func=rank_etfs_by_momentum,
         etf_pool=ETF_POOL,
         momentum_window=MOMENTUM_WINDOW,
         min_switch_conviction=MIN_SWITCH_CONVICTION,
         min_hold_days=MIN_HOLD_DAYS,
+        switch_gate_func=momentum_switch_gate,       # 回测同款"短期动量确认"（2026-10-02）
         risk_mode=RISK_MODE,
         stop_loss_pct=STOP_LOSS_PCT,
         profit_threshold=PROFIT_THRESHOLD,
