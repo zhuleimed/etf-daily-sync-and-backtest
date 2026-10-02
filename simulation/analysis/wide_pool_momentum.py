@@ -63,6 +63,26 @@ PERIODS = [("2024全年", "2024-01-02", "2024-12-31"),
 
 # ────────────────────────── 数据 ──────────────────────────
 
+def curated_pool() -> list[str]:
+    """定向池 = 本仓库既有策略配置池的并集（宽基/跨境/行业/避险/配置/低波）。
+
+    关键：这些标的的选取**早于本次实验**（是为别的策略挑的），所以不存在"事后挑选"
+    偏差；覆盖的资产类别 = 宽基+QDII+债券+黄金+豆粕+行业主题 → 正好检验
+    "资产类别可及性"这个从宽池实验里发现的真机制。
+    """
+    import re
+    confs = ["momentum_rotation", "cross_border", "sector_rotation", "industry_momentum",
+             "gold_safe_haven", "asset_allocation", "low_vol_rotation", "asset_allocation"]
+    codes: set[str] = set()
+    for sid in confs:
+        p = ROOT / "strategies" / sid / "config.py"
+        if p.exists():
+            # 只取 ETF 代码（1xxxxx/5xxxxx），排除指数代码（000xxx/399xxx）
+            codes |= {c for c in re.findall(r'"(\d{6})"\s*:', p.read_text(encoding="utf-8"))
+                      if c[0] in "15"}
+    return sorted(codes)
+
+
 def _candidate_symbols() -> list[str]:
     """宽池候选：历史上有效交易日 ≥ MIN_HISTORY+5 的所有标的（流动性由逐日掩码判定）。"""
     with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as c:
@@ -126,7 +146,7 @@ def adjust_splits(df: pd.DataFrame, momentum_window: int) -> pd.DataFrame:
 
 
 def build_wide_pool(ext_dates: pd.DatetimeIndex, engine_dates: pd.DatetimeIndex,
-                    start: str, momentum_window: int):
+                    start: str, momentum_window: int, symbols: list[str] | None = None):
     """把宽池每只标的对齐到统一日历。
 
     关键：**资格矩阵在"扩展日历"上算**（含 start 前的预热期），否则回测前 60 个交易日
@@ -135,7 +155,7 @@ def build_wide_pool(ext_dates: pd.DatetimeIndex, engine_dates: pd.DatetimeIndex,
 
     返回 (etf_data, 资格用矩阵包)；矩阵在 ext_dates 上，调用方 reindex 到 engine_dates。
     """
-    symbols = _candidate_symbols()
+    symbols = symbols if symbols is not None else _candidate_symbols()
     # 预热必须 ≥ MIN_HISTORY 个**交易日**（60 交易日 ≈ 90 自然日），取 400 自然日留足余量：
     # 否则回测首日所有标的都"上市未满 60 日"，早期被迫空仓。
     lo = (pd.to_datetime(start) - timedelta(days=WARM_DAYS)).strftime("%Y-%m-%d")
@@ -189,8 +209,8 @@ def run_engine(etf_data, dates, mask: pd.DataFrame | None, label: str,
         eng.benchmark_data = pd.DataFrame()
     eng.equal_weight_data = compute_equal_weight_benchmark(etf_data)
 
+    orig = MOM_ENGINE.compute_momentum_signals
     if mask is not None:
-        orig = MOM_ENGINE.compute_momentum_signals
 
         def masked(etf_data_, signal_idx, window, _orig=orig, _mask=mask, _eng=eng):
             mom = _orig(etf_data_, signal_idx, window)
@@ -204,18 +224,16 @@ def run_engine(etf_data, dates, mask: pd.DataFrame | None, label: str,
 
         MOM_ENGINE.compute_momentum_signals = masked
     # 引擎日循环用模块级 ETF_SYMBOLS 组装 today_data（第 227/693 行硬编码），
-    # 宽池必须临时替换为池内标的；运行完还原（不改已验证代码）。
+    # 换池（宽池/定向池）必须临时替换为池内标的；运行完还原（不改已验证代码）。
     orig_symbols = MOM_ENGINE.ETF_SYMBOLS
-    if mask is not None:
-        MOM_ENGINE.ETF_SYMBOLS = list(etf_data.keys())
+    MOM_ENGINE.ETF_SYMBOLS = list(etf_data.keys())
     try:
         t0 = time.time()
         eng.run()
         print(f"    （{label} 耗时 {time.time()-t0:.0f}s，{len(scope)} 只标的）")
     finally:
-        if mask is not None:
-            MOM_ENGINE.compute_momentum_signals = orig
-            MOM_ENGINE.ETF_SYMBOLS = orig_symbols
+        MOM_ENGINE.compute_momentum_signals = orig
+        MOM_ENGINE.ETF_SYMBOLS = orig_symbols
 
     df = eng.get_daily_df()
     df = df[(df["date"] >= start) & (df["date"] <= end)].reset_index(drop=True)
@@ -241,9 +259,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default="2024-01-01")
     ap.add_argument("--end", default="2026-09-30")
+    ap.add_argument("--pool", choices=["wide", "curated"], default="wide",
+                    help="wide=全市场宽池（按流动性分档）；curated=定向池（既有策略配置并集）")
     a = ap.parse_args()
 
-    print(f"═══ 宽池动量实验 | {a.start} → {a.end} ═══")
+    print(f"═══ {'定向池' if a.pool == 'curated' else '宽池'}动量实验 | {a.start} → {a.end} ═══")
     # 扩展窗口加载：资格判定需要 start 之前的预热（否则前 60 日无人可选）
     lo = (pd.to_datetime(a.start) - timedelta(days=WARM_DAYS)).strftime("%Y-%m-%d")
     base_ext, ext_dates = load_all_etf_data(
@@ -254,21 +274,30 @@ def main():
                  for s, d in base_ext.items()}
     print(f"  日期轴（7 只宽基共同日历）: {dates[0].date()} → {dates[-1].date()} 共 {len(dates)} 天")
 
-    print(f"\n[1/3] 加载宽池数据…")
-    frames, close_df, valid, liq20 = build_wide_pool(ext_dates, dates, a.start, C.MOMENTUM_WINDOW)
-    print(f"  候选 {len(frames)} 只（有效交易日 ≥ {MIN_HISTORY+5}）")
-
-    print(f"\n[2/3] 跑基线（7 只宽基，同引擎同窗口）")
-    base = run_engine(base_data, dates, None, "基线·7只宽基", a.start, a.end)
-
-    print(f"\n[3/3] 跑宽池各流动性档")
-    results = [base]
-    for name, thr in TIERS:
-        mask_ext = (close_df > 0) & (valid >= MIN_HISTORY) & (liq20 >= thr)
-        mask = mask_ext.reindex(dates).fillna(False)
-        print(f"  ── 档位 {name}: 平均可选 {mask.sum(axis=1).mean():.0f} 只"
-              f"（首日 {mask.iloc[0].sum()} / 末日 {mask.iloc[-1].sum()}）")
-        results.append(run_engine(frames, dates, mask, f"宽池{name}", a.start, a.end))
+    if a.pool == "curated":
+        syms = curated_pool()
+        print(f"\n[1/3] 定向池 {len(syms)} 只（既有策略配置并集，选取早于本实验）:")
+        print(f"      {' '.join(syms)}")
+        frames, close_df, valid, liq20 = build_wide_pool(
+            ext_dates, dates, a.start, C.MOMENTUM_WINDOW, symbols=syms)
+        print(f"\n[2/3] 跑基线（7 只宽基，同引擎同窗口）")
+        base = run_engine(base_data, dates, None, "基线·7只宽基", a.start, a.end)
+        print(f"\n[3/3] 跑定向池（标的均为既定策略在用，不加流动性掩码）")
+        results = [base, run_engine(frames, dates, None, "定向池(37只)", a.start, a.end)]
+    else:
+        print(f"\n[1/3] 加载宽池数据…")
+        frames, close_df, valid, liq20 = build_wide_pool(ext_dates, dates, a.start, C.MOMENTUM_WINDOW)
+        print(f"  候选 {len(frames)} 只（有效交易日 ≥ {MIN_HISTORY+5}）")
+        print(f"\n[2/3] 跑基线（7 只宽基，同引擎同窗口）")
+        base = run_engine(base_data, dates, None, "基线·7只宽基", a.start, a.end)
+        print(f"\n[3/3] 跑宽池各流动性档")
+        results = [base]
+        for name, thr in TIERS:
+            mask_ext = (close_df > 0) & (valid >= MIN_HISTORY) & (liq20 >= thr)
+            mask = mask_ext.reindex(dates).fillna(False)
+            print(f"  ── 档位 {name}: 平均可选 {mask.sum(axis=1).mean():.0f} 只"
+                  f"（首日 {mask.iloc[0].sum()} / 末日 {mask.iloc[-1].sum()}）")
+            results.append(run_engine(frames, dates, mask, f"宽池{name}", a.start, a.end))
 
     # ── 报告 ──
     print(f"\n{'口径':<14}{'期间':<10}{'收益%':>9}{'夏普':>7}{'MDD%':>8}{'交易笔数':>9}{'平均可选':>9}")
@@ -285,14 +314,14 @@ def main():
     # ── 判据 ──
     print(f"\n═══ 判据（事前登记）═══")
     b = table["基线·7只宽基"]
-    for name, _ in TIERS:
-        w = table[f"宽池{name}"]
+    for label in [r["label"] for r in results if r["label"] != "基线·7只宽基"]:
+        w = table[label]
         worse = [p for p, _, _ in PERIODS
                  if w[p] and b[p] and not (w[p]["sharpe"] > b[p]["sharpe"])]
         full_ok = w["全周期"] and b["全周期"] and w["全周期"]["sharpe"] > b["全周期"]["sharpe"]
         f1 = "证伪" if not full_ok else "通过"
         f2 = "证伪" if len(worse) >= 3 else "通过"
-        print(f"  宽池{name}: 全周期夏普 {w['全周期']['sharpe']:.2f} vs 基线 {b['全周期']['sharpe']:.2f}"
+        print(f"  {label}: 全周期夏普 {w['全周期']['sharpe']:.2f} vs 基线 {b['全周期']['sharpe']:.2f}"
               f" → F1 {f1} | 不占优期间 {len(worse)}/4（{','.join(worse) or '无'}）→ F2 {f2}")
 
 
