@@ -1253,6 +1253,43 @@ def _check_limit_open(symbol, open_price, prev_close):
 
 ---
 
+### 13.8 模拟盘的两种实现模式与信号来源清单
+
+#### 两种模式
+
+| | 模式 A：通用引擎 + 策略信号 | 模式 B：自定义流程 |
+|---|---|---|
+| 代码形态 | 策略只提供 `signal_func`（每只 ETF 一个分数）+ `rank_func`，交给 `DailySimEngine` 编排 | 策略自己的 `daily.py` 从头到尾实现（选股→下单→状态→日志→日报） |
+| 引擎负责 | T+1 订单流、开盘价执行、涨跌停检查、佣金/滑点、持仓状态、风控模式 A/B/C、min_hold、切换置信度、CSV/SQLite/日报、同日幂等护栏 | 全部自己实现（以上每一条都要手写） |
+| 好处 | 全家族行为一致；**引擎修一次，所有策略受益**（如 2026-10-02 同日防重护栏一次覆盖 20 条）；实验可比 | 能表达引擎装不下的策略形态 |
+| 代价 | 只能表达"每只 ETF 一个分数 → 单仓 → 轮动"这一种形态 | 引擎的标准行为必须重实现 → 易漏（**B014/B015**：黄金避险漏维护 last_update/total_value → 汇总显示 0.00、min_hold 保护失效）；不继承引擎后续改进 |
+| 现有条目 | 17 条（15 自身信号 + 2 复用动量信号） | 4 条：资产配置（多资产**权重**模式，引擎是单仓）、组合策略（聚合子策略净值，非交易策略）、配对交易、黄金避险（单仓但带双模式/恐慌切换，历史上先写成了自定义） |
+
+> 新策略优先用模式 A；只有"多资产权重 / 配对双腿 / 聚合"这类形态才用模式 B，且必须逐项补齐引擎职责（状态字段、快照、日报）。
+
+#### 信号来源清单（2026-10-02 核对；**加新策略后必跑**）
+
+```
+python -m simulation.analysis.audit_wiring     # 重新生成/核对下表
+```
+
+| 策略 | 信号来源 | 判定 |
+|---|---|---|
+| momentum_rotation / composite_momentum / macd_trend_rotation / rsi_trend_rotation / adaptive_rotation / adx_trend_rotation / bollinger_reversion / dual_momentum / median_momentum / sharpe_ranking / sortino_ranking / spread_reversion / tail_risk / volume_price（14 条） | `strategies.<同名>.momentum_signals` | 用自身模块 ✅ |
+| neural_momentum | `simulation.strategies.neural_momentum.signals` | 用自身模块（模拟盘侧实现）✅ |
+| cross_border | 复用 `strategies.momentum_rotation.momentum_signals` | **设计如此**：策略即"动量引擎换跨境 ETF 池"，其回测引擎也是同一个 `momentum_rotation.engine` |
+| momentum_vol_filter | 复用 `strategies.momentum_rotation.momentum_signals` | **设计如此**：以动量为基座 + 波动率过滤；其回测信号与动量版逐字节相同 |
+| asset_allocation / combined / pair_trading / gold_safe_haven | —（不走引擎） | 自定义流程（模式 B） |
+| hs300_ma_timing / market_breadth | 复用动量信号 | 未纳入 pipeline、从未运行；如纳管需先核对信号接线 |
+
+**判据（2026-09-25 接线审计结论）**：不是"有没有用动量函数"，而是**实盘是否与该策略自己的回测一致**。
+
+⚠️ **教训**：2026-09 发现 8 条候选策略（布林带回归/双动量/中位数#2/Sharpe/Sortino/价差回归/尾部风险/量价配合）的
+`daily.py` 是复制模板出来的，全部写死 `signal_func=compute_momentum_signals` → 模拟盘全在跑动量轮动，
+各自真实的选股逻辑（写在各自回测 `engine.py` 里）从未被调用，7~8 条曲线**逐字节相同**几个月无人发现。
+修复：移植各自信号 + 清零重算（2026-09-25）。防复发三件套：
+① 本清单 + `audit_wiring` 脚本；② 汇总里的"重复资金曲线巡检"；③ 轨迹对齐监控（实盘 vs 各自回测逐日比对）。
+
 ## 14. 管线编排器 pipeline
 
 ### 14.1 cron 配置
