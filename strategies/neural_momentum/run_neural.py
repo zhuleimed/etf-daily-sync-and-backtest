@@ -65,7 +65,7 @@ def main():
     print(f"  Neural Momentum 回测")
     print(f"  {'=' * 55}")
     print(f"  回测区间: {args.start} → {args.end or '最新'}")
-    print(f"  混合权重: w={args.weight_w}（{'纯动量' if args.weight_w >= 1.0 else f'{args.weight_w}×动量z + {1-args.weight_w:.1f}×神经z'}）")
+    print(f"  混合权重: w={args.weight_w}（{'纯动量' if args.weight_w >= 1.0 else f'{args.weight_w}×动量z + {1-args.weight_w:.2f}×神经z'}）")
     print(f"  神经评分: {len(neural) if neural is not None else 0} 天")
     print(f"  风控模式: {risk_mode} | TOP-N: {top_n} | 调仓周期: {args.adjust_days} 日")
     print(f"  {'=' * 55}")

@@ -44,7 +44,10 @@ def main():
     btr = idx["cumulative_returns"].iloc[-1] - 1 if idx is not None and not idx.empty else None
     ewr = ew["cumulative_returns"].iloc[-1] - 1 if ew is not None and not ew.empty else None
     calc = MetricsCalculator()
-    m = calc.compute(engine.daily_records, engine.trade_records, initial_capital=args.money, benchmark_return=btr, ew_benchmark_return=ewr)
+    # 2026-10-02 修复：本模块 MetricsCalculator.compute 的签名是 (drs, trs, ic, br, ewr)，
+    # 原调用沿用 momentum 的关键字名（initial_capital/benchmark_return/ew_benchmark_return）
+    # → TypeError，回测跑完后结果文件不落盘。
+    m = calc.compute(engine.daily_records, engine.trade_records, args.money, br=btr, ewr=ewr)
 
     print("  [4/4] 生成报告…")
     od = os.path.join(OUTPUT_DIR, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.tag}" if args.tag else f"{datetime.now().strftime('%Y%m%d_%H%M%S')}")

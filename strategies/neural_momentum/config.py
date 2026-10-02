@@ -23,7 +23,9 @@ ETF_SYMBOLS = list(ETF_POOL.keys())
 
 # ═══ Neural Momentum 参数 ═══
 NEURAL_SCORES_PATH = "strategies/neural_momentum/output/neural_scores.csv"
-WEIGHT_W = 0.5   # 混合权重：score = w × 动量z + (1-w) × 神经z（0.3/0.5/0.7 对比）
+WEIGHT_W = 0.25  # 混合权重：score = w × 动量z + (1-w) × 神经z
+                 # 2026-10-02 对齐实盘：simulation/strategies/neural_momentum 用 0.25（回测定稿值），
+                 # 回测侧此前残留 0.5（扫描阶段值）→ 两侧默认不一致
 
 # ============================================================================
 # 回测参数
@@ -151,4 +153,4 @@ BENCHMARK_SYMBOL = "000300"   # 沪深300 作为基准指数
 # ============================================================================
 # 输出
 # ============================================================================
-OUTPUT_DIR = "strategies/momentum_rotation/output"
+OUTPUT_DIR = "strategies/neural_momentum/output"   # 2026-10-02 修复：原指向 momentum 目录
