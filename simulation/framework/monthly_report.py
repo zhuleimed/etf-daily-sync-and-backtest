@@ -224,8 +224,9 @@ def build_monthly_report(output_dir: Optional[str] = None) -> str:
         sh = s.get("sharpe")
         dd = s.get("total_dd", 0)
         sh_str = f"{sh:.2f}" if sh is not None else "  N/A"
+        dd_str = f"{dd:>6.1%}" if dd == dd else "    --"   # NaN（数据太少）显示 --
         lines.append(
-            f"  {s['name']:<16} {mr:>+6.1%} {tr:>+7.1%} {sh_str:>5} {dd:>6.1%}"
+            f"  {s['name']:<16} {mr:>+6.1%} {tr:>+7.1%} {sh_str:>5} {dd_str}"
         )
 
     # 分隔
@@ -248,12 +249,20 @@ def build_monthly_report(output_dir: Optional[str] = None) -> str:
     return "\n".join(lines)
 
 
+def _report_month_label(today: date | None = None) -> str:
+    """报告所属月份（与正文口径一致）：月初前 3 天报上个月。
+
+    2026-10-02 修复：推送标题原用"今天"的月份，月初会与正文（上月）不一致。
+    """
+    today = today or date.today()
+    month = today.replace(day=1) - timedelta(days=1) if today.day <= 3 else today
+    return month.strftime("%Y年%m月")
+
+
 def push_monthly_report(output_dir: Optional[str] = None) -> bool:
     """生成并推送月度报告。"""
     text = build_monthly_report(output_dir)
-    today = date.today()
-    month_label = today.strftime("%Y年%m月")
-    return send_message(f"📊 ETF月度报告 | {month_label}", text)
+    return send_message(f"📊 ETF月度报告 | {_report_month_label()}", text)
 
 
 # ── CLI入口 ──

@@ -25,10 +25,6 @@ H1：策略层组合（等权 / 风险平价）能同时改善"收益-回撤"—
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
-import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -38,6 +34,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from simulation.framework.portfolio_weights import collect_sleeves  # noqa: E402
 
 CACHE = ROOT / "simulation" / "output" / "portfolio_layer_curves.csv"
 # run.py 有 bug、改为直接驱动 engine 的策略（2026-10-02 实测）
@@ -66,129 +64,7 @@ def _pipeline_strategies() -> list[str]:
             if m not in ("sync", "backtest_align") and m not in EXCLUDE]
 
 
-def _from_output(sid: str, start: str, end: str):
-    """找一段**起点与请求一致**的回测（起点不同=不可比：动量类路径依赖，
-    2021 起与 2024 起的同窗口结果可以差几十个百分点）。
-
-    起点容差 10 自然日（请求 2024-01-01，实际数据首日是 2024-01-02）。
-    """
-    import glob
-    lo_tol = (pd.Timestamp(start) + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
-    hi_tol = (pd.Timestamp(end) - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
-    for d in sorted(glob.glob(str(ROOT / f"strategies/{sid}/output/*/")), reverse=True):
-        f = Path(d) / "daily_records.csv"
-        if not f.exists():
-            continue
-        try:
-            df = pd.read_csv(f)
-        except Exception:
-            continue
-        if df.empty or "date" not in df.columns or "total_value" not in df.columns:
-            continue
-        first, last = str(df["date"].iloc[0])[:10], str(df["date"].iloc[-1])[:10]
-        if first <= lo_tol and last >= hi_tol:
-            return df[["date", "total_value"]].copy()
-    return None
-
-
-def _run_backtest(sid: str, start: str, end: str):
-    if sid == "asset_allocation":       # 无 engine.py，走自己的 backtest 模块
-        try:
-            mod = __import__("strategies.asset_allocation.backtest", fromlist=["*"])
-            with contextlib.redirect_stdout(io.StringIO()):
-                close_df, _ = mod.load_data()
-                nav = mod.backtest_equity_series(close_df, "risk_parity", start=start)
-            if nav is None:
-                return None
-            df = nav.reset_index()
-            df.columns = ["date", "total_value"][: len(df.columns)]
-            return df
-        except Exception as e:
-            print(f"    ⚠ asset_allocation 失败: {type(e).__name__}: {e}")
-            return None
-    rp = ROOT / f"strategies/{sid}/run.py"
-    if rp.exists() and sid not in FORCE_ENGINE:
-        try:
-            proc = subprocess.run([sys.executable, "-m", f"strategies.{sid}.run",
-                                   "--start", start, "--end", end, "--tag", "alloc2026"],
-                                  cwd=str(ROOT), capture_output=True, text=True, timeout=900)
-        except Exception as e:
-            print(f"    ⚠ {sid} run.py 失败: {e}")
-            return None
-        # 从 stdout 解析真实输出目录（neural_momentum 的 OUTPUT_DIR 指向 momentum 目录，
-        # 不能按 strategies/<sid>/output 猜——与 backtest_align 同一手法）
-        out_dir = None
-        for line in (proc.stdout or "").splitlines():
-            if "输出目录" in line:
-                out_dir = line.split(":", 1)[1].strip()
-        if out_dir:
-            f = Path(out_dir) / "daily_records.csv"
-            if f.exists():
-                df = pd.read_csv(f)
-                if not df.empty:
-                    return df[["date", "total_value"]].copy()
-        return _from_output(sid, start, end)
-    # 无 run.py：直接驱动 engine（同接口）
-    try:
-        mod = __import__(f"strategies.{sid}.engine", fromlist=["*"])
-        # 必须选**本模块定义**的引擎类（dir() 里还有 import 进来的基类 BacktestEngine，
-        # 选错就会跑成 momentum，产出 7 条完全相同的曲线——2026-10-02 踩过）
-        own = [n for n in dir(mod) if n.endswith("Engine")
-               and isinstance(getattr(mod, n), type)
-               and getattr(mod, n).__module__ == mod.__name__]
-        if not own:
-            print(f"    ⚠ {sid}: engine 模块内无自定义引擎类，跳过")
-            return None
-        eng_cls = getattr(mod, own[0])
-        with contextlib.redirect_stdout(io.StringIO()):
-            eng = eng_cls()
-            eng.load_data(start_date=start, end_date=end)
-            eng.run()
-            df = eng.get_daily_df()
-        return df[["date", "total_value"]].copy()
-    except Exception as e:
-        print(f"    ⚠ {sid} 直接驱动 engine 失败: {type(e).__name__}: {e}")
-        return None
-
-
-def collect(refresh: bool, start: str, end: str) -> pd.DataFrame:
-    if CACHE.exists() and not refresh:
-        print(f"  用缓存 {CACHE}（--refresh 可重跑）")
-        return pd.read_csv(CACHE, dtype={"sid": str})
-    sids = _pipeline_strategies()
-    print(f"  采集 {len(sids)} 条策略回测曲线（排除 {sorted(EXCLUDE)}）…")
-    frames = []
-    for sid in sids:
-        df = _from_output(sid, start, end)
-        if df is None:
-            df = _run_backtest(sid, start, end)
-        if df is None or df.empty:
-            print(f"    ❌ {sid}: 无曲线")
-            continue
-        df = df.rename(columns={"total_value": "tv"})
-        df["sid"] = sid
-        frames.append(df[["date", "sid", "tv"]])
-        print(f"    ✓ {sid:<24}{len(df)} 天  {str(df['date'].iloc[0])[:10]} → {str(df['date'].iloc[-1])[:10]}")
-    out = pd.concat(frames, ignore_index=True)
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    out.to_csv(CACHE, index=False)
-    return out
-
-
 # ─────────────────────── 组合构建 ───────────────────────
-
-def build_returns(panel: pd.DataFrame) -> pd.DataFrame:
-    """date × sid 的日收益矩阵（total_value 变化率）。"""
-    rets = {}
-    for sid, g in panel.groupby("sid"):
-        s = g.sort_values("date").set_index("date")["tv"]
-        s = pd.to_numeric(s, errors="coerce")
-        s.index = pd.to_datetime(s.index)            # 统一索引类型（asset_allocation 为字符串）
-        s = s[~s.index.duplicated(keep="last")]      # 个别曲线有重复日期行（如 gold 670 天）
-        rets[sid] = s.pct_change()
-    R = pd.DataFrame(rets)
-    return R
-
 
 def simulate_portfolio(R: pd.DataFrame, mode: str, vol_scale: bool = False) -> pd.Series:
     """按月再平衡的组合净值（各 sleeve 独立涨跌，漂移不日内再平衡）。
@@ -255,9 +131,11 @@ def main():
     a = ap.parse_args()
 
     print(f"═══ 方向 3 第一步：策略层组合 | {a.start} → {a.end} ═══")
-    panel = collect(a.refresh, a.start, a.end)
-    R = build_returns(panel)
+    # 采集器复用框架模块（唯一实现）：live 优先、否则回测输出、再不行现场驱动 engine
+    R, src, note = collect_sleeves(a.start, a.end, run_missing=True)
     R = R[(R.index >= a.start) & (R.index <= a.end)]
+    for sid, why in note.items():
+        print(f"    ⚠ 跳过 {sid}: {why}")
     print(f"  曲线 {R.shape[1]} 条 × {R.shape[0]} 天")
 
     # ── 相关性（分散化空间）──
