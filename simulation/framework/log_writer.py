@@ -208,6 +208,9 @@ def append_simulation_log(
 ) -> None:
     """追加一条模拟盘日志到策略独立的 CSV。
 
+    同日重复运行（engine 返回 skipped_duplicate）直接跳过：不写重复行，
+    避免 CSV 出现同一日期多行（历史上曾因此污染轨迹分析）。
+
     CSV 不存在时自动处理：
       - 如果 state_{strategy_id}.json 存在 → 先写入起始行，再写当日行
       - 如果 state 不存在 → 直接新建 CSV 并写当日行（新策略首次运行）
@@ -223,6 +226,8 @@ def append_simulation_log(
     etf_pool : dict
         {symbol: name} 映射表
     """
+    if report.get("skipped_duplicate"):
+        return  # 同日重复运行：不写重复行
     state = report.get("state")
     if not state:
         return

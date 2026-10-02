@@ -142,6 +142,44 @@ class DailySimEngine:
 
     # ── 主入口 ──
 
+    def _skip_duplicate_report(
+        self,
+        state: SimState,
+        etf_data: dict[str, pd.DataFrame],
+        today_idx: int,
+        today_str: str,
+    ) -> dict[str, Any]:
+        """同日重复运行 → 返回"已跳过"报告（不改状态、不写快照、不产生订单）。
+
+        报告不含 "error" 键：调用方按正常流程推送一行说明即可，不算运行异常。
+        CSV 日志由 log_writer 依据 skipped_duplicate 标记跳过，避免同日重复行。
+        """
+        hold_sym = state.position.symbol if state.position.shares > 0 else ""
+        stock_value = 0.0
+        df = etf_data.get(hold_sym) if hold_sym else None
+        if df is not None and today_idx < len(df):
+            stock_value = state.position.shares * df.iloc[today_idx]["close"]
+        logger.warning(
+            f"{today_str} 本交易日已运行过（last_update={state.last_update}），"
+            f"跳过重复运行（防同日重跑制造假信号）"
+        )
+        return {
+            "date": today_str,
+            "action": "skipped_duplicate",
+            "skipped_duplicate": True,
+            "hold_symbol": hold_sym,
+            "hold_shares": state.position.shares,
+            "cash": state.cash,
+            "stock_value": stock_value,
+            "total_value": state.cash + stock_value,
+            "trade": None,
+            "risk": None,
+            "order_executed": None,
+            "order_blocked": None,
+            "state": state,
+            "note": f"{today_str} 本交易日已处理过，本次重复运行已跳过（防同日重跑制造假信号）",
+        }
+
     def run_daily(
         self,
         etf_data: dict[str, pd.DataFrame],
@@ -165,6 +203,18 @@ class DailySimEngine:
         state = self.state_mgr.load()
         if state is None:
             state = self.state_mgr.init_new(self.config.get("initial_capital", 10000))
+
+        # ── 1b. 同日幂等防重（2026-10-02 新增）──
+        # 同一交易日重复运行（pipeline 失败重试 / 手工排障重跑）会把"今日收盘后
+        # 生成的待执行订单"当成"昨日订单"在同一个交易日再执行一次，制造假买入/
+        # 假切换：2026-08-18 多个策略因同日重跑产生伪切换（如 510050→512100），
+        # 随后被风控在暴跌日卖出、又踏空回补，永久污染了相对回测的对齐轨迹。
+        # state.last_update == 今天 说明本日已完整跑过一遍 → 直接返回"跳过"报告，
+        # 不改状态、不写快照、不产生订单。（5 个策略在 daily.py 中已有同样的
+        # 前置护栏，此处下沉到引擎，覆盖全部 20 个 DailySimEngine 策略。）
+        if str(getattr(state, "last_update", "")) == today_str:
+            return self._skip_duplicate_report(state, etf_data, today_idx, today_str)
+
         state.last_update = today_str
         state.days_since_switch += 1
         self._bar += 1

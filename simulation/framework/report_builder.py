@@ -45,6 +45,16 @@ def build_signal_report(
     max_rank_display : int
         最多显示前几名，默认 3。
     """
+    # 同日重复运行 → 只推一行说明（不展示账户数字，避免与当日首跑报告重复/歧义）
+    if report.get("skipped_duplicate"):
+        return [
+            "",
+            "  ===========================================",
+            f"  {strategy_name}  |  {report.get('date', '')}",
+            f"  {report.get('note', '本交易日已处理过，跳过重复运行')}",
+            "  ===========================================",
+        ]
+
     state = report.get("state")
     lines: list[str] = []
     action = report.get("action", "unknown")
