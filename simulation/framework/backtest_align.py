@@ -114,6 +114,11 @@ def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None, list[
             if d >= last_reset:
                 anchor_idx = i
                 break
+        else:
+            # 最后一条清零/重构注释行之后还没有任何数据行（如刚清零、尚未跑过）
+            # → 没有可对齐的新轨迹；若退回老起点会拿清零前的旧历史去比回测（假告警）
+            print(f"  ℹ {sid}: 最近一次清零（{last_reset}）后暂无数据行，跳过对齐")
+            return [], [], None, []
     else:
         for i in range(1, len(rets)):
             if rets[i - 1] < -5 and abs(rets[i]) < 0.5 and (rets[i] - rets[i - 1]) > 5:
