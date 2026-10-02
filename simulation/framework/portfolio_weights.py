@@ -118,7 +118,7 @@ def _backtest_returns(sid: str, start: str, end: str) -> pd.Series | None:
     return None
 
 
-def _engine_curve(sid: str, start: str, end: str) -> pd.Series | None:
+def _engine_curve(sid: str, start: str, end: str, quiet: bool = False) -> pd.Series | None:
     """无 run.py/无输出时：直接驱动该策略**自己**的 engine 取曲线（在内存里跑一次）。
 
     注意必须选 `engine.py` 里**本模块定义**的引擎类——`dir(mod)` 还含 import 进来的
@@ -135,7 +135,7 @@ def _engine_curve(sid: str, start: str, end: str) -> pd.Series | None:
             if nav is None:
                 return None
             s = pd.Series(nav.values, index=pd.to_datetime(nav.index))
-            return s.pct_change().dropna()
+            return _dedupe_ret(s)
         mod = __import__(f"strategies.{sid}.engine", fromlist=["*"])
         own = [n for n in dir(mod) if n.endswith("Engine")
                and isinstance(getattr(mod, n), type)
@@ -149,10 +149,50 @@ def _engine_curve(sid: str, start: str, end: str) -> pd.Series | None:
             df = eng.get_daily_df()
         s = pd.Series(pd.to_numeric(df["total_value"], errors="coerce").values,
                       index=pd.to_datetime(df["date"]))
-        return s.pct_change().dropna()
+        return _dedupe_ret(s)
     except Exception as e:
-        print(f"  ⚠ {sid} 驱动 engine 失败: {type(e).__name__}: {e}")
+        if not quiet:
+            print(f"  ⚠ {sid} 驱动 engine 失败: {type(e).__name__}: {e}")
         return None
+
+
+def _run_py_curve(sid: str, start: str, end: str) -> pd.Series | None:
+    """跑一次 `python -m strategies.<sid>.run`（解析其打印的输出目录取曲线）。
+
+    仅用于"没有 engine.py"的策略（如 cross_border 复用 momentum 引擎 + 自己的池子）。
+    """
+    import subprocess
+    import tempfile
+    rp = ROOT / f"strategies/{sid}/run.py"
+    if not rp.exists():
+        return None
+    try:
+        proc = subprocess.run([sys.executable, "-m", f"strategies.{sid}.run",
+                               "--start", start, "--end", end, "--tag", "gate2026"],
+                              cwd=str(ROOT), capture_output=True, text=True, timeout=1800)
+    except Exception as e:
+        print(f"  ⚠ {sid} run.py 失败: {e}")
+        return None
+    out_dir = None
+    for line in (proc.stdout or "").splitlines():
+        if "输出目录" in line:
+            out_dir = line.split(":", 1)[1].strip()
+    if not out_dir:
+        print(f"  ⚠ {sid} run.py 未打印输出目录（stderr 末尾: {(proc.stderr or '')[-200:]}）")
+        return None
+    f = Path(out_dir) / "daily_records.csv"
+    if not f.exists():
+        return None
+    df = pd.read_csv(f)
+    s = pd.Series(pd.to_numeric(df["total_value"], errors="coerce").values,
+                  index=pd.to_datetime(df["date"]))
+    return _dedupe_ret(s)
+
+
+def _dedupe_ret(s: pd.Series) -> pd.Series:
+    """去重日期 + 转日收益（各来源统一走这里，避免重复标签建 DataFrame 失败）。"""
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    return s.pct_change().dropna()
 
 
 def collect_sleeves(start: str, end: str, run_missing: bool = False):
@@ -172,9 +212,13 @@ def collect_sleeves(start: str, end: str, run_missing: bool = False):
             rets[sid], src[sid] = s, "backtest"
             continue
         if run_missing:
-            s = _engine_curve(sid, start, end)
+            s = _engine_curve(sid, start, end, quiet=True)
             if s is not None and len(s) >= VOL_WINDOW:
                 rets[sid], src[sid] = s, "engine"
+                continue
+            s = _run_py_curve(sid, start, end)      # 无 engine.py 的策略（如 cross_border）
+            if s is not None and len(s) >= VOL_WINDOW:
+                rets[sid], src[sid] = s, "runpy"
                 continue
         note[sid] = "无可用曲线（无回测输出；可加 run_missing=True 现场驱动 engine）"
     R = pd.DataFrame(rets).sort_index()
