@@ -1,6 +1,18 @@
-# 宽基ETF动量轮动策略回测框架
+# Neural Momentum（动量 + 神经网络混合）策略
 
-> 基于 20 日动量的 A 股宽基 ETF 轮动策略，在 5 只核心宽基 ETF 中每日优选最强标的持有，通过严格的动量排序与摩擦成本校验执行渐进式调仓。
+> **信号 = w × 动量z + (1-w) × 神经z，w = 0.25（回测定稿值；w=1.0 即纯动量基准）**
+> 神经分由每只宽基 ETF **独立训练的 AGRU** 滚动预测未来 5 日收益（3 年训练 + 3 月重训），
+> 逐日产出 `output/neural_scores.csv` 供模拟盘读取。
+>
+> ⚠️ 本目录 README 的下述章节**沿用了 momentum_rotation 的框架说明**（数据加载/成本/风控/
+> 报告等模块对两者都适用），策略专属内容以本节为准。相关文件：
+> - `run.py`（回测入口，转发 `run_neural.py`；`--weight-w 1.0` = 纯动量基准）
+> - `predict_scores.py` / `predict_one.py`（单 ETF AGRU 预测，产出 `scores_{etf}.csv`）
+> - `monthly_retrain.py`（月末 23:00 cron：特征 → 7 只并行预测 → 合并 `neural_scores.csv`）
+> - 模拟盘：`simulation/strategies/neural_momentum/daily.py`（读同一份 `neural_scores.csv`）
+>
+> 备注：2026-10-02 之前 `run.py` 是 momentum 的遗留副本（跑纯动量、结果写进 momentum 目录），
+> 且月末重训从未运行（cron 转义 bug）→ 评分曾停在 2026-08-04；两处均已修复。
 
 ## 目录
 
