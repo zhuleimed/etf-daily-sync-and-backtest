@@ -115,6 +115,19 @@ class BacktestEngine:
         self.index_data = load_index_data(
             symbol=MARKET_INDEX, start_date=start_date, end_date=end_date, db_path=db_path,
         )
+        # ── 指数按日期对齐到 ETF 交易日历（2026-10-02 修复）──
+        # judge_market_regime(index_data, idx) 内部用 iloc[idx] 取数，而调用方传的 idx
+        # 是 ETF 数组位置；但指数加载起点是 start_date-200天，比 ETF 数据早约 134 个
+        # 交易日 → 不对齐时 regime 实际用的是"半年前的行情"（牛熊判断整体滞后），
+        # 图表里的基准曲线也整体错位。对齐后二者位置一一对应。
+        if not self.index_data.empty:
+            self.index_data = (
+                self.index_data.set_index("date")
+                .reindex(self.dates)      # ETF 交易日历
+                .ffill()                  # 指数缺当日行时沿用最近一日（不超前）
+                .rename_axis("date")
+                .reset_index()
+            )
         self.equal_weight_data = compute_equal_weight_benchmark(self.etf_data)
         return self
 

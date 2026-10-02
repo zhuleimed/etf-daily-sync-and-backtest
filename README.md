@@ -1691,6 +1691,7 @@ pip install pandas numpy matplotlib pydantic-settings \
 | B015 | 黄金避险 SQLite 快照签名错误（8位置参数 vs dict） | 🟡 | 2026-08-05 | daily.py 改 dict 调用，快照成功写入 sim_trading.db |
 | B016 | 同日重复运行把"今日新挂单"当"昨日挂单"执行 → 伪切换 | 🔴 | 2026-10-02 | 引擎层同日幂等护栏（一次修复覆盖全 20 个 DailySimEngine 策略） |
 | B017 | 轨迹对齐告警只看累计缺口 → 历史沉淀缺口每晚重复推送 | 🟡 | 2026-10-02 | 改判"持仓不一致≥3日 / 10日漂移≥5pp"，推送边沿触发（10日提醒） |
+| B018 | ADX 回测 regime 位置错位（用 ETF 位置索引早 134 行的指数数据 → 判定滞后约 6.5 个月） | 🔴 | 2026-10-02 | `engine.load_data` 指数按日期 reindex 到 ETF 日历；ADX 模拟盘同步补 `exit_when_signal_dead`+熊市开仓闸门 |
 
 > 详细修复过程见 `OPTIMIZATION_HISTORY.md` 第 1 节。B008-B010 详见 [[daily-report-t1-format]]。
 > B011-B013 详见 2026-08-03 排查记录（模拟盘7月全面亏损：市场暴跌主因+引擎对齐修复）。

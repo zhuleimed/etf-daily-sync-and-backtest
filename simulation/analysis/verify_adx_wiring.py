@@ -40,8 +40,15 @@ SID = "adx_trend_rotation"
 SEED = "2026-08-03"          # 模拟盘清零重启日（对齐锚点）
 END = "2026-09-30"
 LIVE_CSV = PROJECT_ROOT / "simulation" / "output" / f"sim_log_{SID}.csv"
-# 回测基准：2024-01-02~2026-09-30 全周期回测（与模拟盘同一套策略代码）
-BACKTEST_CSV = PROJECT_ROOT / "strategies" / SID / "output" / "20261002_175317_bear_gate_check" / "daily_records.csv"
+# 回测基准：2024-01-02~2026-09-30 全周期回测（与模拟盘同一套策略代码）。
+# 默认取最新一次（regime 对齐修复后的那个；跑了新的就自动用新的）
+def _latest_backtest() -> Path:
+    out = PROJECT_ROOT / "strategies" / SID / "output"
+    for pat in ("*regime_align_fix*", "*bear_gate_check*"):
+        hits = sorted(out.glob(pat))
+        if hits:
+            return hits[-1] / "daily_records.csv"
+    return out / "daily_records.csv"
 
 
 def _walk(engine, etf, dates, i0, day0, day1):
@@ -105,11 +112,13 @@ def main():
     ap.add_argument("--seed", default=SEED, help=f"重放起点（默认 {SEED}）")
     ap.add_argument("--end", default=END, help=f"重放终点（默认 {END}）")
     a = ap.parse_args()
-    if not BACKTEST_CSV.exists():
-        print(f"缺少回测基准 {BACKTEST_CSV}\n先跑: python -m strategies.{SID}.run "
-              f"--start 2024-01-01 --end {END} --tag bear_gate_check")
+    back_csv = _latest_backtest()
+    if not back_csv.exists():
+        print(f"缺少回测基准 {back_csv}\n先跑: python -m strategies.{SID}.run "
+              f"--start 2024-01-01 --end {END} --tag regime_align_fix")
         sys.exit(1)
-    back_df = pd.read_csv(BACKTEST_CSV, dtype={"hold_symbol": str})
+    print(f"回测基准: {back_csv.parent.name}")
+    back_df = pd.read_csv(back_csv, dtype={"hold_symbol": str})
 
     print(f"═══ ADX 接线修复验证 | 锚点 {a.seed} → {a.end} ═══\n")
     variants = [
