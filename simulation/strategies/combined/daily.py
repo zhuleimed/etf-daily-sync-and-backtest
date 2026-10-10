@@ -20,6 +20,7 @@ from simulation.framework.state import StateManager
 from simulation.framework.data import is_trading_day
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.signal_fp import signal_fingerprint
 from simulation.framework import sim_db
 
 from simulation.strategies.combined.config import (
@@ -175,6 +176,15 @@ def main():
             "order_executed": None,
             "order_blocked": None,
         }
+        # 打分指纹（供克隆巡检）：组合策略**没有自己的选股动作**——
+        # 它是"动量轮动 80% + 配对交易 20%"的净值合成器，持仓也只是借用动量的展示。
+        # 所以这里指纹记录的是它当天读到的两路子策略收益（=它做决策的全部输入），
+        # 用来识别"被复制出来的组合策略"或"读错了源状态文件"。
+        # 两路都为 0（都还没动过）时指纹为空 = 无有效信号，不参与比对。
+        report_for_csv["signal_fp"] = signal_fingerprint({
+            "momentum_rotation": mom_return,
+            "pair_trading": pair_return,
+        })
         append_simulation_log("combined", STRATEGY_NAME, report_for_csv, ETF_NAMES)
     except Exception:
         logger.exception("写入组合策略CSV日志失败")

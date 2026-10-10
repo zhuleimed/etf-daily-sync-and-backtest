@@ -29,7 +29,8 @@ import pandas as pd
 
 from simulation.framework.data import load_latest_data, is_trading_day
 from simulation.framework.notify import push_daily_report, push_error_alert
-from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.log_writer import append_simulation_log, _FIELDS
+from simulation.framework.signal_fp import signal_fingerprint
 from simulation.framework import sim_db
 
 from strategies.asset_allocation.config import (
@@ -161,29 +162,35 @@ def execute_rebalance(
 # ════════════════════════════════════════════════════════
 
 def _append_csv_log(state: dict, today_str: str, action: str,
-                    total_value: float, total_return: float) -> None:
+                    total_value: float, total_return: float,
+                    signal_fp: str = "") -> None:
     """自写 CSV 日志（与标准格式一致，供 summary 汇总）。
 
     append_simulation_log 依赖 report["state"]（DailySimEngine 结构），
     资产配置的 state 是 holdings dict（多资产），结构不同——直接追加。
+
+    列定义直接复用 log_writer._FIELDS：本文件曾自己抄一份 13 列表头，
+    加「信号指纹」列时两处会脱节，写出长短不齐的行。
     """
     import csv as _csv
     path = PROJECT_ROOT / "simulation" / "output" / f"sim_log_{STRATEGY_ID}.csv"
-    header = ["日期", "策略", "操作", "持仓标的", "持仓名称", "持仓数量",
-              "持仓均价", "现金", "市值", "总资产", "累计收益率",
-              "订单执行", "明日待执行"]
     hold_desc = ";".join(
         f"{ASSETS.get(s, s)}:{p['shares']}股" for s, p in state.get("holdings", {}).items()
     ) or "空仓"
-    row = [today_str, STRATEGY_NAME, action, hold_desc, "", "",
-           len(state.get("holdings", {})), round(state.get("cash", 0), 2),
-           round(total_value - state.get("cash", 0), 2),
-           round(total_value, 2), f"{total_return:+.2f}%", "", ""]
+    row = {
+        "日期": today_str, "策略": STRATEGY_NAME, "操作": action,
+        "持仓标的": hold_desc, "持仓名称": "",
+        "持仓数量": len(state.get("holdings", {})), "持仓均价": "",
+        "现金": round(state.get("cash", 0), 2),
+        "市值": round(total_value - state.get("cash", 0), 2),
+        "总资产": round(total_value, 2), "累计收益率": f"{total_return:+.2f}%",
+        "订单执行": "", "明日待执行": "", "信号指纹": signal_fp,
+    }
     new_file = not path.exists()
     with open(path, "a", encoding="utf-8-sig", newline="") as f:
-        w = _csv.writer(f)
+        w = _csv.DictWriter(f, fieldnames=_FIELDS)
         if new_file:
-            w.writerow(header)
+            w.writeheader()
         w.writerow(row)
 
 
@@ -269,7 +276,11 @@ def main() -> None:
         "target_weights": state.get("target_weights", {}),
         "pending_weights": state.get("pending_weights"),
     }
-    _append_csv_log(state, today_str, action, total_value, total_return)
+    # 打分指纹（供克隆巡检）：风险平价目标权重向量——这就是它的"选股打分"。
+    # 权重只在月末重算并存入 state，所以平日指纹保持不变（大脑当天没有新意见）。
+    # 尚未算出过权重时为空 = 无有效信号，不参与比对。
+    _append_csv_log(state, today_str, action, total_value, total_return,
+                    signal_fingerprint(state.get("target_weights") or {}))
     try:
         sim_db.record_account_daily({
             "date": today_str,

@@ -28,6 +28,7 @@ from simulation.framework.data import (
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.signal_fp import signal_fingerprint
 from simulation.framework import sim_db
 
 from simulation.strategies.pair_trading.config import (
@@ -280,6 +281,14 @@ def run_sim_daily(
 
     # ── 开仓/切换信号 ──
     valid = [s for s in signals if s["target"] is not None and s["strength"] > 0 and s["volume_ok"]]
+
+    # 打分指纹（供克隆巡检）：各配对的 z-score 向量 + 最终选中的标的。
+    # 与下面 best 的选法保持一致（strength 最大者），只记日志、不影响交易。
+    report["signal_fp"] = signal_fingerprint(
+        {s["pair"]: s["z"] for s in signals},
+        max(valid, key=lambda s: s["strength"])["target"] if valid else None,
+    )
+
     if valid:
         best = max(valid, key=lambda s: s["strength"])
         target = best["target"]

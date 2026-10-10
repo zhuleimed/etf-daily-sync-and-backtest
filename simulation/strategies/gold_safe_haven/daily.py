@@ -297,9 +297,8 @@ def main():
         "panic_info": panic_result,
         "ranking": {str(k): v for k, v in ranking.items()} if len(ranking) > 0 else {},
     }
-    # 打分向量指纹（供克隆巡检）：自建 main 的 4 个策略里只有它补了，
-    # 因为它在 2026-10-09 的误报组里；combined/pair_trading/asset_allocation
-    # 结构各异，仍在巡检覆盖之外（见 summary.py 的覆盖范围说明）。
+    # 打分向量指纹（供克隆巡检）：动量打分 + 宽基第一名。
+    # 其余三个自建 main 的策略也各自接了指纹，见 summary.py 的覆盖范围说明。
     report["signal_fp"] = signal_fingerprint(momentum, top_etf)
 
     pending = state.pending_order
