@@ -5,8 +5,32 @@
 宽度 < 30% → 空仓避险
 宽度 30-70% → 空仓避险（NEUTRAL_MODE=cash）
 
-调用方式（由 pipeline.py 在数据同步完成后触发）：
+调用方式：
     python -m simulation.strategies.market_breadth.daily
+
+═══════════════════════════════════════════════════════════════════════════
+⚠️ 本策略【未纳入 pipeline、从未运行】——原因与启用须知（2026-10-10 留记号）
+═══════════════════════════════════════════════════════════════════════════
+1) 没跑的原因：**回测已证伪**，不是接线问题。
+   ① 它的回测曾是全项目第二（+285.3%），但那个数字来自 **look-ahead bias**——
+      用当日收盘价决定当日开盘的交易。改用昨日数据（严格 T+1）后落到 **+74.2%**，
+      低于纯动量 59 个百分点（见 strategies/STRATEGY_COMPARISON.md 第 12 节）。
+   ② 2026-10-02 换思路再测一次（不做独立策略、改做"组合层总闸"）→ 宽度闸的稳健性
+      检验不过（真实效果只在随机减仓分布的第 76 百分位，随机可到第 90）→ **再次证伪**。
+
+2) 接线是**完整**的，别误改：本策略 = "动量选股 + 市场宽度闸门"，
+   复用 `compute_momentum_signals` 是**设计如此**（同 momentum_vol_filter），
+   闸门由本文件的 compute_breadh() / determine_regime() / should_stay_out()
+   真实实现，与文件顶部描述一致。
+
+3) 如要启用，先知道这件事：本策略的 ETF 池 / 动量窗口 / 切换阈值
+   （0.03 / 10 天）与纯动量**完全相同**，因此**强市期间它的选股决策与
+   momentum_rotation 逐日一致**——这是设计产物、不是 bug。
+   届时汇总里的"克隆巡检"会把这两个策略报出来（打分+净值都相同），
+   应在 `simulation/framework/summary.py` 的 `_INTENTIONAL_SHARED_SCORING`
+   里登记，**不要去查 signal_func**。
+
+（原 docstring 写的"由 pipeline.py 触发"与事实不符，已更正——它从未注册进管线。）
 """
 
 from __future__ import annotations

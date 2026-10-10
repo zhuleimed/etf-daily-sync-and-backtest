@@ -1280,7 +1280,7 @@ python -m simulation.analysis.audit_wiring     # 重新生成/核对下表
 | cross_border | 复用 `strategies.momentum_rotation.momentum_signals` | **设计如此**：策略即"动量引擎换跨境 ETF 池"，其回测引擎也是同一个 `momentum_rotation.engine` |
 | momentum_vol_filter | 复用 `strategies.momentum_rotation.momentum_signals` | **设计如此**：以动量为基座 + 波动率过滤；其回测信号与动量版逐字节相同 |
 | asset_allocation / combined / pair_trading / gold_safe_haven | —（不走引擎） | 自定义流程（模式 B） |
-| hs300_ma_timing / market_breadth | 复用动量信号 | 未纳入 pipeline、从未运行；如纳管需先核对信号接线 |
+| hs300_ma_timing / market_breadth | 复用动量信号（选股）+ **各自的择时闸门** | **设计如此**：策略本体就是"动量选股 + 择时开关"（HS300>MA10 / 宽度>70% 才轮动），闸门在各自 `daily.py` 里真实实现。未纳入 pipeline、从未运行的原因是**回测已证伪**（look-ahead 修复后崩盘 + 2026-10-02 组合层复测再次证伪），**不是接线问题**——详见各自 `daily.py` 顶部说明 |
 
 **判据（2026-09-25 接线审计结论）**：不是"有没有用动量函数"，而是**实盘是否与该策略自己的回测一致**。
 
