@@ -88,20 +88,24 @@ def _extract_strategy_id(filename: str) -> Optional[str]:
 # ═══════════════════════════════════════════════
 
 
-def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
-    """从CSV历史数据计算绩效指标。
+def _since_last_reset(df: pd.DataFrame) -> pd.DataFrame:
+    """截取最后一个"清零/重构注释行"之后的数据。
 
-    关键：指标从最后一个"清零/重构注释行"之后算起——
-    清零重启（2026-08-03）时 7 月历史亏损段仍留在 CSV 中，
-    若从历史算，清零后仅运行 1-2 天也会显示 -12%/-19% 的旧回撤。
+    统一口径：绩效指标与克隆巡检都只认当前这段账期。清零重启（2026-08-03、
+    2026-10-08）后历史段仍留在 CSV 里，若从历史算，清零后只跑 1-2 天也会
+    显示上一段的旧回撤/旧信号。
     """
+    if "操作" not in df.columns:
+        return df
     # 定位最后一个注释行（操作列以【开头：清零重启/框架重构）
-    mask = pd.Series(False, index=df.index)
-    if "操作" in df.columns:
-        mask = df["操作"].astype(str).str.startswith("【")
+    mask = df["操作"].astype(str).str.startswith("【")
     last_comment = df.index[mask].max() if mask.any() else None
-    if last_comment is not None:
-        df = df.iloc[last_comment + 1:]
+    return df.iloc[last_comment + 1:] if last_comment is not None else df
+
+
+def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
+    """从CSV历史数据计算绩效指标（从最后一次清零之后算起）。"""
+    df = _since_last_reset(df)
 
     n = len(df)
     if n < 2:
@@ -156,6 +160,31 @@ def _compute_metrics(df: pd.DataFrame, initial_capital: float) -> dict:
         "win_rate": win_rate,
         "n_days": n,
         "fingerprint": fingerprint,
+    }
+
+
+def _clone_evidence(df: pd.DataFrame) -> dict:
+    """从 CSV 提取克隆巡检要用的信息（口径同指标：只算最后一次清零之后）。
+
+    sig_seq —— 当日"选股打分向量指纹"序列，只保留有可辨识打分的那几天
+               （全 0 分/空 = 全市场没信号，不参与比对，见 signal_fp.py）。
+    traded_days —— 期间有持仓的天数，用作"这条曲线到底动没动过"的门槛。
+    """
+    d = _since_last_reset(df)
+
+    if "信号指纹" in d.columns:
+        sigs = d["信号指纹"].fillna("").astype(str).str.strip()
+    else:
+        sigs = pd.Series("", index=d.index)
+
+    traded_days = 0
+    if "持仓数量" in d.columns:
+        shares = pd.to_numeric(d["持仓数量"], errors="coerce").fillna(0)
+        traded_days = int((shares > 0).sum())
+
+    return {
+        "sig_seq": tuple(s for s in sigs if s),
+        "traded_days": traded_days,
     }
 
 
@@ -239,6 +268,12 @@ def build_strategy_summary(output_dir: str) -> list[dict]:
         else:
             entry["metrics"] = {}
 
+        # ── 克隆巡检证据（打分指纹序列 + 有持仓天数） ──
+        entry["clone_evidence"] = (
+            _clone_evidence(csv_df) if csv_df is not None else
+            {"sig_seq": (), "traded_days": 0}
+        )
+
         strategies.append(entry)
 
     return strategies
@@ -249,18 +284,85 @@ def build_strategy_summary(output_dir: str) -> list[dict]:
 # ═══════════════════════════════════════════════
 
 
-def find_duplicate_curve_groups(strategies: list[dict]) -> list[list[str]]:
-    """找出资金曲线完全相同的策略分组（每组≥2个）。
+# ── 克隆策略巡检 ──
+# 判据是"选股打分向量相同"，而不是"净值相同"——净值相同另有成因，
+# 打分相同才是同一个大脑（详见 signal_fp.py）。两条序列合起来分三类，
+# 只有第一类会推送告警，另两类只写管线日志：
+#   打分同 + 净值同 → 克隆嫌疑（真问题，要查 daily.py 的 signal_func）
+#   打分同 + 净值不同 → 共用打分实现（如波动率过滤以动量为基座，设计如此）
+#   净值同 + 打分不同 → 买到了同一只标的（巧合，非接线问题）
+#
+# 覆盖范围：走 DailySimEngine 的 17 个策略 + 黄金避险（自建 main 里补了指纹）。
+# combined / pair_trading / asset_allocation 三个自建 main 结构各异、未接指纹，
+# 不在本巡检覆盖内——要纳入得各自单独接线。
+MIN_SIGNAL_DAYS = 5
 
-    返回 [[名称, 名称, ...], ...]，用于在汇总里提示"这些策略其实是同一条曲线"。
+# 有意共用打分实现的策略（设计如此，不告警）。
+#   波动率过滤、尾部风险 都以动量打分为基座，分别叠加"高波动覆写"和
+#   "沪深300急跌→切最低波动ETF"，它们的回测引擎也是这么写的
+#   （见 strategies/REWIRE_SIGNALS_20260925.md 第二节）。
+#   中位数#2 同理以动量为基座，但它把第 2 名提到第 1 名、选中的标的与
+#   纯动量不同，指纹（含 target）天然分得开，所以不需要登记。
+# 判定规则：一组"打分相同"的策略**全部**落在本名单内，才降级为提示；
+# 只要混进来一个名单外的策略（例如克隆事故把布林带回归也接成了动量），
+# 组里就会出现名单外成员 → 照常告警。
+_INTENTIONAL_SHARED_SCORING = {
+    "momentum_rotation",
+    "momentum_vol_filter",
+    "tail_risk",
+}
+
+
+def analyze_clone_groups(strategies: list[dict]) -> dict[str, list[list[str]]]:
+    """按"打分指纹序列 / 净值序列"分组，返回三类名单。
+
+    MIN_SIGNAL_DAYS 是证据门槛：至少要攒够这么多天"有可辨识打分"才判定。
+    长假清零后头几天所有策略都在空仓观望，任何比对都没有区分力——
+    2026-10-09 那次误报正是只攒了 2 天数据就下了结论。
     """
-    groups: dict[str, list[str]] = {}
+    sig_groups: dict[tuple, list[dict]] = {}
+    curve_groups: dict[str, list[dict]] = {}
+
     for s in strategies:
-        fp = s.get("metrics", {}).get("fingerprint")
-        if not fp:
+        ev = s.get("clone_evidence") or {}
+        sigs = ev.get("sig_seq", ())
+        if len(sigs) >= MIN_SIGNAL_DAYS:
+            sig_groups.setdefault(sigs, []).append(s)
+
+        m = s.get("metrics", {})
+        fp = m.get("fingerprint")
+        # 净值比对额外要求"期间真的持有过"：空仓不动的曲线人人相同，
+        # 拿它当证据只会制造噪音（清零后 13 个空仓策略就是这么撞在一起的）。
+        if fp and m.get("n_days", 0) >= MIN_SIGNAL_DAYS and ev.get("traded_days", 0) >= 1:
+            curve_groups.setdefault(fp, []).append(s)
+
+    clone: list[list[str]] = []
+    shared_signal: list[list[str]] = []
+    same_curve: list[list[str]] = []
+
+    def _names(members: list[dict]) -> list[str]:
+        return [str(m.get("name", m.get("strategy_id", "?"))) for m in members]
+
+    for members in sig_groups.values():
+        if len(members) < 2:
             continue
-        groups.setdefault(fp, []).append(str(s.get("name", s.get("strategy_id", "?"))))
-    return [names for names in groups.values() if len(names) > 1]
+        ids = {str(m.get("strategy_id", "")) for m in members}
+        curves = {m.get("metrics", {}).get("fingerprint") for m in members}
+        # 净值不同 → 只是共用打分实现，不是克隆；
+        # 一圈人全在"有意共用"名单里 → 同理降级为提示。
+        if len(curves) > 1 or ids <= _INTENTIONAL_SHARED_SCORING:
+            shared_signal.append(_names(members))
+        else:
+            clone.append(_names(members))
+
+    for members in curve_groups.values():
+        if len(members) < 2:
+            continue
+        seqs = {tuple((m.get("clone_evidence") or {}).get("sig_seq", ())) for m in members}
+        if len(seqs) > 1:  # 打分不同 → 只是买到了同一只标的
+            same_curve.append(_names(members))
+
+    return {"clone": clone, "shared_signal": shared_signal, "same_curve": same_curve}
 
 
 def format_summary_text(
@@ -354,15 +456,16 @@ def format_summary_text(
     # 底部
     lines.append("\n" + "─" * 40)
 
-    # ── 重复资金曲线告警 ──
-    # 多个策略逐日净值完全相同 = 它们跑的是同一份信号，累计收益率必然一样。
-    # 这类"克隆策略"会污染横向比较，必须在推送里显式点出来。
-    dups = find_duplicate_curve_groups(strategies)
-    if dups:
-        lines.append(f"⚠️ 重复资金曲线 {len(dups)} 组（累计收益率逐日完全相同）")
-        for names in dups:
+    # ── 克隆策略告警 ──
+    # 只有"选股打分和资金曲线都逐日相同"才推送：这类策略跑的是同一个选股大脑，
+    # 会污染横向比较。净值相同但打分不同（买到同一只标的）只写管线日志，
+    # 免得天天误报把真正的告警淹掉。
+    clones = analyze_clone_groups(strategies)["clone"]
+    if clones:
+        lines.append(f"⚠️ 疑似克隆策略 {len(clones)} 组（选股打分与资金曲线逐日完全相同）")
+        for names in clones:
             lines.append(f"  · {' / '.join(names)}")
-        lines.append("  → 请检查这些策略的 signal_func 是否接成了同一个")
+        lines.append("  → 打分也一样，说明这些 daily.py 很可能指向了同一个 signal_func")
         lines.append("")
 
     if pipeline_info:
@@ -392,12 +495,18 @@ def push_strategy_summary(
     strategies = build_strategy_summary(output_dir)
     text = format_summary_text(strategies, pipeline_info)
 
-    # 同步打到管线日志——推送正文不落盘，出问题时这里才有据可查
-    dups = find_duplicate_curve_groups(strategies)
-    if dups:
-        print(f"  ⚠️ 重复资金曲线 {len(dups)} 组：")
-        for names in dups:
-            print(f"     · {' / '.join(names)}")
+    # 同步打到管线日志——推送正文不落盘，出问题时这里才有据可查。
+    # 三类都打：推送只出"克隆嫌疑"，另两类留在日志里备查，不占用推送版面。
+    analysis = analyze_clone_groups(strategies)
+    for key, label in (
+        ("clone", "⚠️ 疑似克隆（打分+净值都相同）"),
+        ("shared_signal", "ℹ️ 共用打分实现（净值不同）"),
+        ("same_curve", "ℹ️ 净值相同但打分不同（买到同一只标的）"),
+    ):
+        if analysis[key]:
+            print(f"  {label} {len(analysis[key])} 组：")
+            for names in analysis[key]:
+                print(f"     · {' / '.join(names)}")
 
     today = datetime.now().strftime("%Y-%m-%d")
     title = f"📊 ETF模拟盘汇总 | {today}"

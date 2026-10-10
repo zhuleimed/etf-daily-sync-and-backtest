@@ -92,7 +92,7 @@ from strategies.composite_momentum.momentum_signals import compute_composite_sig
 | ② 接线：daily.py 改用自己的信号函数 | `simulation/strategies/<名字>/daily.py` ×8 |
 | ③ 补出 daily 需要的常量（`BB_PERIOD`/`VOL_WINDOW`/`LOOKBACK`/`ABS_MA`…） | `simulation/strategies/<名字>/config.py` ×8 |
 | ④ 历史仓位清零 + CSV 断点注释行 | `simulation/output/state_*.json`、`sim_log_*.csv` ×8 |
-| ⑤ 汇总加"重复资金曲线"巡检 | `simulation/framework/summary.py` |
+| ⑤ 汇总加"重复资金曲线"巡检 | `simulation/framework/summary.py`（2026-10-10 改为按"打分指纹"比对，见 [`../docs/CLONE_CHECK_EXPLAINED_20261010.md`](../docs/CLONE_CHECK_EXPLAINED_20261010.md)） |
 | ⑥ 修 `adaptive_rotation` 显示 bug + 阈值半接线 | `log_writer.py`、`strategies/adaptive_rotation/signals.py` |
 
 ### 为什么要清零（④）
@@ -303,4 +303,6 @@ ls simulation/output/backup_pre_rewire_20260925_101219/
 3. **别停在"它们表现像同一个策略"**——要查到 `signal_func` 这一层。
    回测有各自逻辑 ≠ 实盘接上了各自逻辑。
 4. 新增策略时检查 `daily.py` 的 `signal_func` / `rank_func` 指向谁；
-   汇总里的"重复资金曲线"巡检会自动兜住这类问题。
+   汇总里的巡检会自动兜住这类问题（**2026-10-10 起按"选股打分指纹"比对**，
+   不再拿"资金曲线相同"当证据——那有别的成因，会误报：
+   见 [`../docs/CLONE_CHECK_EXPLAINED_20261010.md`](../docs/CLONE_CHECK_EXPLAINED_20261010.md)）。

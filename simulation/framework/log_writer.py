@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "output"
 
@@ -40,12 +44,37 @@ _FIELDS = [
     "累计收益率",
     "订单执行",
     "明日待执行",
+    "信号指纹",  # 当日选股打分向量的指纹，供汇总巡检识别"克隆策略"（见 signal_fp.py）
 ]
 
 
 def _csv_path(strategy_id: str) -> Path:
     """返回某个策略的 CSV 文件路径。"""
     return _LOG_DIR / f"sim_log_{strategy_id}.csv"
+
+
+def _migrate_header(csv_path: Path) -> None:
+    """老 CSV 表头缺少新增列时就地补齐（旧行补空值）。
+
+    只允许"在末尾追加列"这一种情形：先确认老表头是新字段的**前缀**，
+    否则列的位置对不上，按位置重写会把数据写串行——此时报错并原样保留。
+    写临时文件后原子替换，避免中途失败留下半截文件。
+    """
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows or rows[0] == _FIELDS:
+        return
+    if rows[0] != _FIELDS[: len(rows[0])]:
+        logger.error(f"{csv_path.name} 表头与当前字段不兼容，跳过迁移：{rows[0]}")
+        return
+
+    tmp = csv_path.with_suffix(".csv.tmp")
+    with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(_FIELDS)
+        for r in rows[1:]:
+            w.writerow(r + [""] * (len(_FIELDS) - len(r)))
+    os.replace(tmp, csv_path)
 
 
 def _db_path() -> str:
@@ -269,6 +298,7 @@ def append_simulation_log(
                     "现金": round(cash, 2), "市值": round(sv, 2),
                     "总资产": round(tv, 2), "累计收益率": cr,
                     "订单执行": "", "明日待执行": "",
+                    "信号指纹": "",
                 }
                 with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
                     w = csv.DictWriter(f, fieldnames=_FIELDS)
@@ -276,6 +306,10 @@ def append_simulation_log(
                     w.writerow(init_row)
             except Exception:
                 pass
+
+    # ── 老 CSV 补齐新增列（表头一致时该函数立即返回） ──
+    if csv_path.exists():
+        _migrate_header(csv_path)
 
     # ── 写入当日行 ──
     total_value = report.get("total_value", state.cash)
@@ -304,6 +338,7 @@ def append_simulation_log(
         "累计收益率": cum_ret,
         "订单执行": _make_order_executed_description(report),
         "明日待执行": _make_pending_description(report, etf_pool),
+        "信号指纹": report.get("signal_fp", ""),
     }
 
     with open(csv_path, "a", newline="", encoding="utf-8-sig") as f:

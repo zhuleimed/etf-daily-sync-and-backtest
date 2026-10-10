@@ -24,6 +24,7 @@ import pandas as pd
 from .state import SimState, StateManager, PositionState
 from .broker import SimBroker
 from .risk import RiskResult, run_all_risk_checks
+from .signal_fp import signal_fingerprint
 
 from simulation.framework import sim_db
 
@@ -356,6 +357,9 @@ class DailySimEngine:
         target_mom = momentum.get(target_etf, float("nan")) if target_etf else float("nan")
 
         report["ranking"] = {str(k): str(v) for k, v in ranking.items()} if len(ranking) > 0 else {}
+        # 打分向量指纹：写进日志后，汇总巡检就能用"是不是同一个选股大脑"
+        # 来判断克隆策略，而不是拿"净值相同"去猜（详见 signal_fp.py）。
+        report["signal_fp"] = signal_fingerprint(momentum, target_etf)
 
         # ── 计算信号动作（供日报展示），但不一定产生 pending_order ──
         has_position = state.position.shares > 0

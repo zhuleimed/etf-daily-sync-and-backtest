@@ -31,6 +31,7 @@ from simulation.framework.data import (
 )
 from simulation.framework.notify import push_daily_report, push_error_alert
 from simulation.framework.log_writer import append_simulation_log
+from simulation.framework.signal_fp import signal_fingerprint
 from simulation.framework import sim_db
 
 from simulation.strategies.gold_safe_haven.config import (
@@ -296,6 +297,10 @@ def main():
         "panic_info": panic_result,
         "ranking": {str(k): v for k, v in ranking.items()} if len(ranking) > 0 else {},
     }
+    # 打分向量指纹（供克隆巡检）：自建 main 的 4 个策略里只有它补了，
+    # 因为它在 2026-10-09 的误报组里；combined/pair_trading/asset_allocation
+    # 结构各异，仍在巡检覆盖之外（见 summary.py 的覆盖范围说明）。
+    report["signal_fp"] = signal_fingerprint(momentum, top_etf)
 
     pending = state.pending_order
     if pending:
