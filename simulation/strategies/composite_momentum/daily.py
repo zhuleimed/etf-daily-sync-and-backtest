@@ -57,9 +57,11 @@ from simulation.strategies.composite_momentum.config import (
 
 from strategies.composite_momentum.momentum_signals import (
     compute_composite_score as _compute_composite_score,
+    compute_composite_spread,
     rank_etfs_by_composite,
     judge_market_regime,
 )
+from strategies.composite_momentum.config import SWITCH_CONVICTION_STD
 
 logger = logging.getLogger("composite_momentum_sim")
 
@@ -83,6 +85,17 @@ def compute_composite_signals(
         index_data=_index_data,
         market_ma_period=MARKET_MA_PERIOD,
     )
+
+
+def composite_switch_threshold(momentum: pd.Series, target_etf: str, hold_sym: str) -> float:
+    """切换阈值——与回测 `_make_decision` 同口径（2026-10-16 接线，B022）。
+
+    回测：`score_diff > max(截面标准差 × SWITCH_CONVICTION_STD, 0.1)` 才换仓。
+    模拟盘此前用的是 config 里的 `MIN_SWITCH_CONVICTION=0.03`（照抄动量模板），
+    比回测**松 5~8 倍** → 模拟盘明显更爱换手、轨迹长期偏离回测。
+    离线重放实测（纯信号口径）：2025 缺口 -13.19pp → +1.02pp、持仓一致率 55% → 66%。
+    """
+    return max(compute_composite_spread(momentum) * SWITCH_CONVICTION_STD, 0.1)
 
 
 def load_etf_and_index_data(
@@ -308,6 +321,7 @@ def main():
         momentum_window=MOMENTUM_WINDOW,
         min_switch_conviction=MIN_SWITCH_CONVICTION,
         min_hold_days=MIN_HOLD_DAYS,
+        switch_threshold_func=composite_switch_threshold,   # B022：与回测同口径（2026-10-16）
         risk_mode=RISK_MODE,
         stop_loss_pct=STOP_LOSS_PCT,
         profit_threshold=PROFIT_THRESHOLD,

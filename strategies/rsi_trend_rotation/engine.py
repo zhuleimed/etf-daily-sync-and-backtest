@@ -121,6 +121,18 @@ class BacktestEngine:
         self.index_data = load_index_data(
             symbol=MARKET_INDEX, start_date=start_date, end_date=end_date, db_path=db_path,
         )
+        # ── 指数按日期对齐到 ETF 交易日历（2026-10-16 修复，同 adx/composite）──
+        # judge_market_regime 内部用 iloc[date_idx]，而调用方传的是 ETF 数组位置；
+        # 指数起点比 ETF 早 → 不对齐时 regime 判的是几个月前的行情。
+        # 实测影响面：672 天里持仓一天不变（只影响 regime 列/基准曲线，属外观）。
+        if not self.index_data.empty:
+            self.index_data = (
+                self.index_data.set_index("date")
+                .reindex(self.dates)
+                .ffill()
+                .rename_axis("date")
+                .reset_index()
+            )
         self.equal_weight_data = compute_equal_weight_benchmark(self.etf_data)
         return self
 

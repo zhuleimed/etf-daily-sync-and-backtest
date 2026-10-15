@@ -153,8 +153,12 @@ def _new_engine(state_mgr, thr_func, signal_func, risk_mode: str = ""):
     )
 
 
-def _run(seed: str, end: str, fix_regime: bool, fix_threshold: bool, risk_mode: str = ""):
-    """重放一个变体（seed 起 fresh 现金）。返回 (dates, rets%, holds, rows)。"""
+def _run(seed: str, end: str, fix_regime: bool, fix_threshold: bool, risk_mode: str = "",
+         thr_func=None):
+    """重放一个变体（seed 起 fresh 现金）。返回 (dates, rets%, holds, rows)。
+
+    thr_func 非空时用它替代 fix_threshold 推导出的阈值函数（用于校验 live 接线）。
+    """
     lo = (datetime.strptime(seed, "%Y-%m-%d") - timedelta(days=400)).strftime("%Y-%m-%d")
     etf = _load_range(ETF_SYMBOLS, lo, end, MOMENTUM_WINDOW)
     dates = _dates(etf[ETF_SYMBOLS[0]])
@@ -163,7 +167,7 @@ def _run(seed: str, end: str, fix_regime: bool, fix_threshold: bool, risk_mode: 
     idx = _load_index((datetime.strptime(lo, "%Y-%m-%d") - timedelta(days=250)).strftime("%Y-%m-%d"), end)
     pos_stale, pos_fixed, _ = _mk_regime_pos(dates, idx)
     sig = _signal_func(idx, pos_fixed if fix_regime else pos_stale)
-    thr = _thr_backtest if fix_threshold else _thr_live
+    thr = thr_func or (_thr_backtest if fix_threshold else _thr_live)
 
     rows = []
     with tempfile.TemporaryDirectory(prefix="compfix_") as tmp:

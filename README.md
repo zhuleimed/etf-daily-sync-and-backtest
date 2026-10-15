@@ -1738,8 +1738,8 @@ pip install pandas numpy matplotlib pydantic-settings \
 | B019 | 动量类模拟盘漏接"短期动量确认"（`SHORT_TERM_MOMENTUM_CHECK=True` 是已记录配置，实盘却无此门 → 追跌换手） | 🔴 | 2026-10-02 | 提取共享 `short_term_momentum_ok()` + 引擎 `switch_gate_func` 钩子；momentum_rotation/momentum_vol_filter 接线 |
 | B020 | 清零重启后对齐监控拿"抱着旧仓的回测"去比"空仓起步的模拟盘" → 每次清零必刷假告警；且"无可对齐记录"被打印成 ✅（假阴性） | 🔴 | 2026-10-16 | 回测加 `--trade-from` 空仓起步 + 预热 45→90 交易日；skipped 单独统计 |
 | B021 | composite 模拟盘 regime 按"数组位置"取 → 判牛熊读的是 14 个交易日前的行情 | 🟡 | 2026-10-16 | 指数按日期对齐到 ETF 日历（同 B018 修法）；4 期重放实测行为影响 0 |
-| B022 | composite 模拟盘切换阈值 0.03 vs 回测 `max(0.5×σ, 0.1)`（松 5~8 倍，模拟盘更爱换手） | 🟡 | 2026-10-16 | **待用户决策**：纯信号口径 4 期重放，修后一致率 55→66%、缺口 -13.2→+1.0pp |
-| B023 | B018 同类写法影响面实测（rsi 0 天 / macd 3 天 / mean_reversion 28 天且差 10.22pp） | 🟡 | 2026-10-16 | 待决策是否修（工具 `analysis/audit_regime_alignment.py` 已就位） |
+| B022 | composite 模拟盘切换阈值 0.03 vs 回测 `max(0.5×σ, 0.1)`（松 5~8 倍，模拟盘更爱换手） | 🔴 | 2026-10-16 | 接 `switch_threshold_func` 用回测同口径；纯信号 4 期重放：一致率 55→66%、缺口 -13.2→+1.0pp。**实盘成绩会向回测靠拢** |
+| B023 | B018 同类写法影响面实测（rsi 0 天 / macd 3 天 / mean_reversion 28 天且差 10.22pp） | 🟡 | 2026-10-16 | 三个回测引擎均按日期对齐指数；**mean_reversion 历史指标随之更新**（工具 `analysis/audit_regime_alignment.py`） |
 
 > 详细修复过程见 `OPTIMIZATION_HISTORY.md` 第 1 节。B008-B010 详见 [[daily-report-t1-format]]。
 > B011-B013 详见 2026-08-03 排查记录（模拟盘7月全面亏损：市场暴跌主因+引擎对齐修复）。
