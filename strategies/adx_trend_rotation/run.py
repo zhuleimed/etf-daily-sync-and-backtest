@@ -27,6 +27,9 @@ def parse_args():
     parser.add_argument("--money", type=float, default=INITIAL_CAPITAL)
     parser.add_argument("--risk-mode", type=str, default="", choices=["", "A", "B", "C"])
     parser.add_argument("--tag", type=str, default="")
+    # 对齐监控专用（2026-10-16）：此日期之前只预热指标、不下单
+    parser.add_argument("--trade-from", type=str, default="",
+                        help="只在此时刻之后才允许交易（默认空=全程可交易）")
     return parser.parse_args()
 
 
@@ -44,7 +47,8 @@ def main():
     print(f"  风控模式: {risk_mode} = {mode_names.get(risk_mode, risk_mode)}")
     print(f"  {'=' * 55}")
 
-    engine = BacktestEngine(initial_capital=args.money, risk_mode=risk_mode)
+    engine = BacktestEngine(initial_capital=args.money, risk_mode=risk_mode,
+                            trade_from=args.trade_from)
     print("  [1/4] 加载数据…")
     engine.load_data(start_date=args.start, end_date=args.end)
     print("  [2/4] 运行回测…")

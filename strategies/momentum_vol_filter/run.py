@@ -74,6 +74,9 @@ def parse_args():
                         help="持有动量前N只ETF（0=用config默认）")
     parser.add_argument("--no-dynamic-window", action="store_true",
                         help="禁用动态动量窗口")
+    # 对齐监控专用（2026-10-16）：此日期之前只预热指标、不下单
+    parser.add_argument("--trade-from", type=str, default="",
+                        help="只在此时刻之后才允许交易（默认空=全程可交易）")
 
     return parser.parse_args()
 
@@ -110,7 +113,8 @@ def main():
                             risk_mode=risk_mode,
                             momentum_window=args.momentum,
                             top_n=top_n,
-                            dynamic_window=dynamic_window)
+                            dynamic_window=dynamic_window,
+                            trade_from=args.trade_from)
 
     # ---- 加载数据 ----
     print("  [1/4] 加载数据…")

@@ -44,6 +44,9 @@ def parse_args():
     p.add_argument("--tag", default="")
     p.add_argument("--risk-mode", default=cfg.RISK_MODE, choices=["A", "B", "C"])
     p.add_argument("--scan", action="store_true", help="网格搜索最优参数")
+    # 对齐监控专用（2026-10-16）：此日期之前只预热指标、不下单
+    p.add_argument("--trade-from", default="",
+                   help="只在此时刻之后才允许交易（默认空=全程可交易）")
     return p.parse_args()
 
 
@@ -53,7 +56,7 @@ def parse_args():
 
 def run_backtest(start_date, end_date, initial_capital, momentum_window,
                  min_hold_days=None, min_conviction=None, risk_mode="A",
-                 verbose=True):
+                 verbose=True, trade_from=""):
     """运行单次回测。复用动量引擎，仅替换 ETF 池。"""
     # 保存原始值
     orig_hold = cfg.MIN_HOLD_DAYS
@@ -104,6 +107,7 @@ def run_backtest(start_date, end_date, initial_capital, momentum_window,
             momentum_window=momentum_window,
             top_n=cfg.TOP_N,
             dynamic_window=cfg.DYNAMIC_WINDOW_ENABLED,
+            trade_from=trade_from,
         )
 
         from strategies.momentum_rotation.data import load_all_etf_data as _load
@@ -252,7 +256,7 @@ def main():
     result = run_backtest(
         start_date=args.start, end_date=args.end,
         initial_capital=args.money, momentum_window=args.momentum,
-        risk_mode=args.risk_mode,
+        risk_mode=args.risk_mode, trade_from=args.trade_from,
     )
 
     metrics = result["metrics"]

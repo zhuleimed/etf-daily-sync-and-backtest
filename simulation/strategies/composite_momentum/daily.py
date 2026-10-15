@@ -127,8 +127,16 @@ def load_etf_and_index_data(
             df["date"] = pd.to_datetime(df["date"])
             df["close"] = pd.to_numeric(df["close"], errors="coerce").fillna(0)
             df["pct_chg"] = df["close"].pct_change().fillna(0.0)
+            # ── 按日期对齐到 ETF 交易日历（2026-10-16 修，与 adx 2026-10-02 同修法）──
+            # judge_market_regime 内部用 iloc[date_idx] 取数，而调用方传的 date_idx 是
+            # **ETF 数组位置**；指数窗口（D-140天，93行）比 ETF 窗口（D-120天，79行）长
+            # ⇒ 不对齐时判牛熊实际读的是 **14 个交易日前的行情**（2026-10-15 实测读到 09-17）。
+            ref_dates = next(iter(etf_data.values()))["date"] if etf_data else None
+            if ref_dates is not None and len(ref_dates) > 0:
+                df = (df.set_index("date").reindex(ref_dates).ffill()
+                      .rename_axis("date").reset_index())
             _index_data = df
-            logger.info(f"指数 {MARKET_INDEX} 数据加载完成：{len(df)}行")
+            logger.info(f"指数 {MARKET_INDEX} 数据加载完成：{len(df)}行（已按 ETF 日历对齐）")
         else:
             _index_data = None
             logger.warning(f"指数 {MARKET_INDEX} 数据为空")

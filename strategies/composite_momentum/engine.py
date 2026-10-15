@@ -100,8 +100,14 @@ class BacktestEngine:
         self,
         initial_capital: float = INITIAL_CAPITAL,
         risk_mode: str = "",
+        trade_from: str = "",
     ):
         self.initial_capital = initial_capital
+        # 对齐监控专用（2026-10-16）：此日期之前只做指标预热、不下单。
+        # 模拟盘清零重启后是空仓起步，回测若带着重启前的旧仓进入比对窗口必然分叉（假告警）。
+        self.trade_from: pd.Timestamp | None = (
+            pd.Timestamp(trade_from) if trade_from else None
+        )
         self.risk_mode = risk_mode or RISK_MODE
         self._days_since_last_switch = 999
 
@@ -166,6 +172,9 @@ class BacktestEngine:
         print(f"  {'=' * 40}")
 
         for idx in range(n):
+            # 对齐监控专用（2026-10-16）：trade_from 之前只算指标、不下单
+            if self.trade_from is not None and self.dates[idx] < self.trade_from:
+                continue
             today_data = {sym: self.etf_data[sym].iloc[idx] for sym in ETF_SYMBOLS}
             has_position = bool(self.positions)
             hold_symbol = self._get_hold_symbol()

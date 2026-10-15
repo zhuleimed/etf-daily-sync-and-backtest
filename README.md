@@ -1736,11 +1736,16 @@ pip install pandas numpy matplotlib pydantic-settings \
 | B017 | 轨迹对齐告警只看累计缺口 → 历史沉淀缺口每晚重复推送 | 🟡 | 2026-10-02 | 改判"持仓不一致≥3日 / 10日漂移≥5pp"，推送边沿触发（10日提醒） |
 | B018 | ADX 回测 regime 位置错位（用 ETF 位置索引早 134 行的指数数据 → 判定滞后约 6.5 个月） | 🔴 | 2026-10-02 | `engine.load_data` 指数按日期 reindex 到 ETF 日历；ADX 模拟盘同步补 `exit_when_signal_dead`+熊市开仓闸门 |
 | B019 | 动量类模拟盘漏接"短期动量确认"（`SHORT_TERM_MOMENTUM_CHECK=True` 是已记录配置，实盘却无此门 → 追跌换手） | 🔴 | 2026-10-02 | 提取共享 `short_term_momentum_ok()` + 引擎 `switch_gate_func` 钩子；momentum_rotation/momentum_vol_filter 接线 |
+| B020 | 清零重启后对齐监控拿"抱着旧仓的回测"去比"空仓起步的模拟盘" → 每次清零必刷假告警；且"无可对齐记录"被打印成 ✅（假阴性） | 🔴 | 2026-10-16 | 回测加 `--trade-from` 空仓起步 + 预热 45→90 交易日；skipped 单独统计 |
+| B021 | composite 模拟盘 regime 按"数组位置"取 → 判牛熊读的是 14 个交易日前的行情 | 🟡 | 2026-10-16 | 指数按日期对齐到 ETF 日历（同 B018 修法）；4 期重放实测行为影响 0 |
+| B022 | composite 模拟盘切换阈值 0.03 vs 回测 `max(0.5×σ, 0.1)`（松 5~8 倍，模拟盘更爱换手） | 🟡 | 2026-10-16 | **待用户决策**：纯信号口径 4 期重放，修后一致率 55→66%、缺口 -13.2→+1.0pp |
+| B023 | B018 同类写法影响面实测（rsi 0 天 / macd 3 天 / mean_reversion 28 天且差 10.22pp） | 🟡 | 2026-10-16 | 待决策是否修（工具 `analysis/audit_regime_alignment.py` 已就位） |
 
 > 详细修复过程见 `OPTIMIZATION_HISTORY.md` 第 1 节。B008-B010 详见 [[daily-report-t1-format]]。
 > B011-B013 详见 2026-08-03 排查记录（模拟盘7月全面亏损：市场暴跌主因+引擎对齐修复）。
 > B014-B015 详见 2026-08-05 排查记录（黄金避险独立实现未跟上框架v2 state 字段规范）。
 > B016-B017 详见 `strategies/ALIGN_ALERT_FIX_20261002.md`（09-30 轨迹对齐告警复盘 + 监控重构 + 3 条待决策的真实持仓偏离）。
+> B020-B023 详见 `strategies/ALIGN_MONITOR_FIX_20261016.md`（10-14 轨迹对齐告警复盘 + 监控口径修复 + composite 接线缺口离线重放 + B018 影响面实测）。
 
 ---
 

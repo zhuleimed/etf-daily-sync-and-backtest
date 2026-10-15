@@ -4,9 +4,17 @@
 
 目标：区分"市场环境导致模拟盘亏损"与"模拟盘逻辑 bug"。
 方法：对同一策略，用回测引擎跑相同区间得到逐日轨迹，与模拟盘 CSV 逐日对齐：
-  - 回测从"模拟盘起点前 45 个交易日"起步（保证动量/指标预热充分），
+  - 回测从"模拟盘起点前 90 个交易日"起步（保证动量/指标预热充分，见 PREWARM_DAYS），
   - 以模拟盘起点日为锚点重锚回测收益（排除预热期对累计收益的干扰），
   - 逐日计算偏差 = 模拟盘收益 - 回测收益（百分点），超阈值 → 微信告警。
+
+**清零重启后的"空仓起步"对齐（2026-10-16 新增）**
+模拟盘清零重启后账户是**空仓**起步（重启后第一个交易日按当日 #1 建仓）；
+若回测仍带着重启前的旧仓进入比对窗口，两边起点状态不同，必然分叉
+（2026-10-14 的三条告警即此：模拟盘 510050 vs 回测抱着重启前的 588000/512100，
+且 MIN_HOLD_DAYS 让回测 10 个交易日内不许换仓）。
+⇒ 识别到"清零重启/重构"注释行时，回测改用 `--trade-from <锚点的下一个交易日>`：
+  预热期只算指标不下单，从锚点次日起才允许交易——与模拟盘的空仓起步一一对应。
 
 回测与模拟盘存在固有差异（回测无涨跌停、执行价=当日open vs 模拟盘=次日open、
 回测渐进调仓 vs 模拟盘一次性切换等），正常偏差约 1~3pp；暴跌市/极端行情下可达 5~8pp。
@@ -54,7 +62,11 @@ DEFAULT_STRATEGIES = [
 
 DB_PATH = PROJECT_ROOT / "data" / "etf_daily.db"
 OUTPUT_DIR = PROJECT_ROOT / "simulation" / "output"
-PREWARM_DAYS = 45  # 回测预热交易日数（保证动量/指标充分计算）
+PREWARM_DAYS = 90  # 回测预热交易日数。
+                   # 2026-10-16 由 45 提到 90：牛熊判定用 MA60，45 个交易日时
+                   # judge_market_regime 会因 `date_idx < ma_period` 恒返回 neutral
+                   # （即比对窗口内 regime 闸门等于没开）；90 天同时覆盖复合动量的
+                   # 60 日窗口与波动率过滤的 20 日窗口，余量充足。
 
 # 告警判定参数（2026-10-02 重构：改看"当下是否脱离"，不看累计缺口）
 MISMATCH_ALERT_DAYS = 3    # 持仓与回测不一致需连续≥N个共同交易日才告警
@@ -65,8 +77,8 @@ REMIND_DAYS = 10           # 同一未解决状态每隔 N 个共同交易日再
 ALERT_STATE_PATH = OUTPUT_DIR / "backtest_align_state.json"  # 上次推送状态（防重复打扰）
 
 
-def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None, list[str]]:
-    """读取模拟盘 CSV，返回 (日期列表, 累计收益率%列表, 对齐锚点日期, 每日持仓标的列表)。
+def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None, list[str], str]:
+    """读取模拟盘 CSV，返回 (日期列表, 累计收益率%列表, 对齐锚点日期, 每日持仓标的列表, 最后一次重置日期)。
 
     处理三类特殊情况：
       1. "历史起点"追记行（日期可能为空）——跳过
@@ -77,7 +89,7 @@ def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None, list[
     """
     path = OUTPUT_DIR / f"sim_log_{sid}.csv"
     if not path.exists():
-        return [], [], None, []
+        return [], [], None, [], ""
     # 持仓标的按字符串读：否则 pandas 会把 510050 推成 510050.0，空仓行变 nan，
     # 与回测侧 "510050"/"" 的字符串比较必然不等 → 全窗口假"持仓不一致"
     df = pd.read_csv(path, dtype={"持仓标的": str})
@@ -118,7 +130,7 @@ def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None, list[
             # 最后一条清零/重构注释行之后还没有任何数据行（如刚清零、尚未跑过）
             # → 没有可对齐的新轨迹；若退回老起点会拿清零前的旧历史去比回测（假告警）
             print(f"  ℹ {sid}: 最近一次清零（{last_reset}）后暂无数据行，跳过对齐")
-            return [], [], None, []
+            return [], [], None, [], ""
     else:
         for i in range(1, len(rets)):
             if rets[i - 1] < -5 and abs(rets[i]) < 0.5 and (rets[i] - rets[i - 1]) > 5:
@@ -127,7 +139,9 @@ def load_sim_series(sid: str) -> tuple[list[str], list[float], str | None, list[
         print(f"  ℹ {sid}: 检测到收益重置点（{dates[anchor_idx]}），从重置后对齐"
               f"（{anchor_idx}行重置前历史不参与）")
     anchor = dates[anchor_idx] if dates else None
-    return dates[anchor_idx:], rets[anchor_idx:], anchor, holds[anchor_idx:]
+    # 最后一次重置日期（无则空串）：调用方据此让回测也从空仓起步（见模块 docstring）
+    last_reset = reset_markers[-1] if reset_markers else ""
+    return dates[anchor_idx:], rets[anchor_idx:], anchor, holds[anchor_idx:], last_reset
 
 
 def get_prewarm_start(anchor_date: str, n: int = PREWARM_DAYS) -> str:
@@ -149,12 +163,19 @@ def get_latest_trade_day() -> str:
         return conn.execute("SELECT MAX(date) FROM etf_daily").fetchone()[0]
 
 
-def run_backtest(sid: str, start: str, end: str, tag: str) -> pd.DataFrame | None:
-    """子进程调 run.py 跑回测，返回 daily_records DataFrame。"""
+def run_backtest(sid: str, start: str, end: str, tag: str,
+                 trade_from: str = "") -> pd.DataFrame | None:
+    """子进程调 run.py 跑回测，返回 daily_records DataFrame。
+
+    trade_from 非空时传 `--trade-from`：该日期之前只预热指标、不下单，
+    用于"模拟盘清零重启 → 回测也空仓起步"的 apples-to-apples 比对。
+    """
     cmd = [
         sys.executable, "-m", f"strategies.{sid}.run",
         "--start", start, "--end", end, "--tag", tag,
     ]
+    if trade_from:
+        cmd += ["--trade-from", trade_from]
     try:
         proc = subprocess.run(
             cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=600,
@@ -184,7 +205,8 @@ def run_backtest(sid: str, start: str, end: str, tag: str) -> pd.DataFrame | Non
 
 
 def align(sid: str, sim_dates: list[str], sim_rets: list[float],
-          sim_holds: list[str], back_df: pd.DataFrame) -> list[dict]:
+          sim_holds: list[str], back_df: pd.DataFrame,
+          trade_from: str = "") -> list[dict]:
     """逐日对齐，返回偏差记录列表（含双方当日持仓）。
 
     回测侧以锚点（模拟盘首日）重锚：back_ret_anchored = (1+cum)/(1+cum@anchor) - 1。
@@ -204,8 +226,14 @@ def align(sid: str, sim_dates: list[str], sim_rets: list[float],
     anchor = sim_dates[0]
     cum_at_anchor = back_map.get(anchor)
     if cum_at_anchor is None:
-        print(f"  ⚠ 回测轨迹缺少锚点 {anchor}，跳过")
-        return []
+        if trade_from:
+            # 空仓起步：锚点当日回测还没开始交易 → 没有记录行。此时账户仍是初始资金、
+            # 一笔未成交 ⇒ 锚点累计收益恒等于 0，用 0 做基准与"锚点行存在"完全等价。
+            print(f"  ℹ 回测自 {trade_from} 起才交易（空仓起步），锚点 {anchor} 基准按 0 计")
+            cum_at_anchor = 0.0
+        else:
+            print(f"  ⚠ 回测轨迹缺少锚点 {anchor}，跳过")
+            return []
 
     records = []
     for d, s_ret, s_hold in zip(sim_dates, sim_rets, sim_holds):
@@ -254,8 +282,9 @@ def report(sid: str, records: list[dict], threshold: float, push: bool,
     提醒一次，不每晚重复（判定条件编码为 key 存 ALERT_STATE_PATH）。
     """
     if not records:
-        print(f"  ⚠ {sid}: 无可对齐记录")
-        return {"over": False, "pushed": False}
+        # 注意：skip 不等于"一致"——必须在 main 里单独统计，否则会打印成 ✅（假阴性）
+        print(f"  ⚠ {sid}: 无可对齐记录（本次未做任何比对）")
+        return {"over": False, "pushed": False, "skipped": True}
     last = records[-1]
     max_dev = max(records, key=lambda r: abs(r["dev"]))
     hist_over = [r["date"] for r in records if abs(r["dev"]) > threshold * 100]
@@ -346,27 +375,43 @@ def main():
 
     alert_state = _load_alert_state()
     any_alert, any_push = False, False
+    skipped: list[str] = []   # 未做比对的策略（无记录/回测失败）——不能算"一致"
     for sid in strategies:
-        sim_dates, sim_rets, anchor, sim_holds = load_sim_series(sid)
+        sim_dates, sim_rets, anchor, sim_holds, last_reset = load_sim_series(sid)
         if not sim_dates or anchor is None:
             print(f"  ⚠ {sid}: 无模拟盘记录，跳过")
             continue
         start = get_prewarm_start(anchor)
-        print(f"\n  ▶ {sid}: 锚点 {anchor} → 回测 {start}~{latest}")
-        back_df = run_backtest(sid, start, latest, f"align_{sid}")
+        # 清零重启 → 模拟盘是空仓起步（锚点当日的决定在次日开盘执行）
+        # ⇒ 回测也必须从锚点次日起才允许交易，否则带着重启前的旧仓进入比对窗口必然分叉
+        trade_from = sim_dates[1] if (last_reset and len(sim_dates) > 1) else ""
+        note = f"；空仓起步（清零 {last_reset} → 交易自 {trade_from} 起）" if trade_from else ""
+        print(f"\n  ▶ {sid}: 锚点 {anchor} → 回测 {start}~{latest}{note}")
+        back_df = run_backtest(sid, start, latest, f"align_{sid}", trade_from=trade_from)
         if back_df is None:
+            skipped.append(sid)
             continue
-        records = align(sid, sim_dates, sim_rets, sim_holds, back_df)
+        records = align(sid, sim_dates, sim_rets, sim_holds, back_df, trade_from=trade_from)
         result = report(sid, records, args.threshold, args.push, alert_state)
         any_alert |= result["over"]
         any_push |= result["pushed"]
+        if result.get("skipped"):
+            skipped.append(sid)
 
     if args.push:
         _save_alert_state(alert_state)  # 记录已推送状态，防下一晚重复打扰
 
     # 有告警也正常退出：告警已通过微信推送（或已推过处于静默期），监控步骤本身"完成"
     tail = "" if not args.push else ("（已推送）" if any_push else "（已推送过，本次静默）")
-    print(f"\n完成：{'存在脱离轨迹告警 ⚠' + tail if any_alert else '全部持仓一致、无快速漂移 ✅'}")
+    skipped_note = f"；另有 {len(skipped)} 个策略未比对：{', '.join(skipped)}" if skipped else ""
+    if any_alert:
+        summary = f"存在脱离轨迹告警 ⚠{tail}"
+    elif skipped:
+        # 防假阴性：没比对 ≠ 一致
+        summary = f"已比对部分无脱离告警{skipped_note}"
+    else:
+        summary = "全部持仓一致、无快速漂移 ✅"
+    print(f"\n完成：{summary}")
     sys.exit(0)
 
 

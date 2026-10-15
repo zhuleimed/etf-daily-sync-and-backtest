@@ -49,6 +49,9 @@ def parse_args():
                         help="风控模式: A=纯信号, B=全开, C=仅极端回撤")
     parser.add_argument("--tag", type=str, default="",
                         help="回测标记，用于输出目录命名")
+    # 对齐监控专用（2026-10-16）：此日期之前只预热指标、不下单
+    parser.add_argument("--trade-from", type=str, default="",
+                        help="只在此时刻之后才允许交易（默认空=全程可交易）")
     return parser.parse_args()
 
 
@@ -68,7 +71,8 @@ def main():
     print(f"  {'=' * 55}")
 
     # 1. 创建引擎
-    engine = BacktestEngine(initial_capital=args.money, risk_mode=risk_mode)
+    engine = BacktestEngine(initial_capital=args.money, risk_mode=risk_mode,
+                            trade_from=args.trade_from)
 
     # 2. 加载数据
     print("  [1/4] 加载数据…")
