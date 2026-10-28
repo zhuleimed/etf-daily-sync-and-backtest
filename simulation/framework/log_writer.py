@@ -113,6 +113,13 @@ def _make_action_description(report: dict, etf_pool: dict[str, str]) -> str:
         name = etf_pool.get(sym, sym)
         return f"空仓，发出买入信号({name}[{sym}])←明日开盘执行"
 
+    if action == "exit_pending":
+        # 持仓得分归零 → 发出卖出信号
+        po = state.pending_order if state else None
+        sym = po.get("symbol", "") if po else ""
+        name = etf_pool.get(sym, sym)
+        return f"持仓信号消失，发出卖出信号({name}[{sym}])←明日开盘执行"
+
     if action == "hold_cash":
         return "空仓，无买入信号"
 

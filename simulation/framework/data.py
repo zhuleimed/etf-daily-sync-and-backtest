@@ -64,6 +64,17 @@ def load_latest_data(
             for w in [10, 15, 20]:
                 df[f"momentum_{w}"] = df["close"] / df["close"].shift(w) - 1
 
+            # 恐慌指标基础列（gold_safe_haven 的 panic_signals 需要）。
+            # 口径与回测 strategies/gold_safe_haven/data.py 保持一致：
+            # 缺这两列会让 compute_panic_indicators 取数失败、恐慌分恒为 0。
+            df["ret_1d"] = df["close"].pct_change().fillna(0.0)
+            df["ret_5d"] = df["close"] / df["close"].shift(5) - 1
+            df["vol_21d"] = df["ret_1d"].rolling(window=21).std() * (252 ** 0.5)
+            df["vol_63d"] = df["ret_1d"].rolling(window=63).std() * (252 ** 0.5)
+            df["vol_ratio"] = (df["vol_21d"] / df["vol_63d"]).where(
+                df["vol_63d"] > 0, 1.0
+            )
+
             result[sym] = df
 
     return result

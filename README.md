@@ -543,6 +543,9 @@ etf_data = load_latest_data(
     lookback_days=60,               # 加载最近60个自然日
     momentum_window=20,             # 动量窗口
 )
+# 返回的 DataFrame 列：date/open/high/low/close/volume/pct_chg、
+# momentum/momentum_10/momentum_15/momentum_20、
+# ret_1d/ret_5d/vol_21d/vol_63d/vol_ratio（后 5 列供黄金避险的恐慌指标使用）
 ```
 
 ### 6.3 基准指数加载
@@ -1740,6 +1743,8 @@ pip install pandas numpy matplotlib pydantic-settings \
 | B021 | composite 模拟盘 regime 按"数组位置"取 → 判牛熊读的是 14 个交易日前的行情 | 🟡 | 2026-10-16 | 指数按日期对齐到 ETF 日历（同 B018 修法）；4 期重放实测行为影响 0 |
 | B022 | composite 模拟盘切换阈值 0.03 vs 回测 `max(0.5×σ, 0.1)`（松 5~8 倍，模拟盘更爱换手） | 🔴 | 2026-10-16 | 接 `switch_threshold_func` 用回测同口径；纯信号 4 期重放：一致率 55→66%、缺口 -13.2→+1.0pp。**实盘成绩会向回测靠拢** |
 | B023 | B018 同类写法影响面实测（rsi 0 天 / macd 3 天 / mean_reversion 28 天且差 10.22pp） | 🟡 | 2026-10-16 | 三个回测引擎均按日期对齐指数；**mean_reversion 历史指标随之更新**（工具 `analysis/audit_regime_alignment.py`） |
+| B024 | 黄金避险恐慌指标从未生效：模拟盘数据加载器不含 `ret_5d`/`vol_ratio`，恐慌分恒为 0.00，7月暴跌也不切黄金；若真持有黄金，止损取列还会 KeyError | 🔴 | 2026-10-29 | `simulation/framework/data.py` 补 `ret_1d/ret_5d/vol_21d/vol_63d/vol_ratio`（口径同回测 `gold_safe_haven/data.py`） |
+| B025 | 模拟盘 CSV「操作」列只记当日执行、不记当日新信号：信号日显示"无买入信号/持有"，与「明日待执行」列自相矛盾 | 🟡 | 2026-10-29 | 引擎建 pending 时写回 `action=signal`；`log_writer` 补 `exit_pending` 分支 |
 
 > 详细修复过程见 `OPTIMIZATION_HISTORY.md` 第 1 节。B008-B010 详见 [[daily-report-t1-format]]。
 > B011-B013 详见 2026-08-03 排查记录（模拟盘7月全面亏损：市场暴跌主因+引擎对齐修复）。

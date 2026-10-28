@@ -442,22 +442,30 @@ class DailySimEngine:
                     self._confirm = {"sym": target_etf, "days": 1}
                 confirmed = self._confirm["days"] >= self.confirm_days
 
+            created_pending = False
             if signal == "exit_pending":
                 state.pending_order = {
                     "action": "sell", "symbol": hold_sym,
                     "reason": "持仓信号消失", "created": today_str,
                 }
+                created_pending = True
             # open/switch 需过 confirm；且现金开的 open 还要过风控清仓回补冷却
             elif signal == "open_pending" and confirmed and not _risk_cooldown_active(self):
                 state.pending_order = {
                     "action": "buy", "symbol": target_etf,
                     "reason": "动量信号开仓", "created": today_str,
                 }
+                created_pending = True
             elif signal == "switch_pending" and confirmed:
                 state.pending_order = {
                     "action": "switch", "sell_symbol": hold_sym,
                     "buy_symbol": target_etf, "reason": "动量切换", "created": today_str,
                 }
+                created_pending = True
+            # "操作"列（CSV 日志）要反映今天产生的信号，即使明日才执行。
+            # 重构时漏了这一步，导致信号日被记成"无买入信号/持有"（2026-10-29 修复）。
+            if created_pending:
+                report["action"] = signal
         # 当 can_create_pending=False 时：
         #   - 信号已计算（report["signal"]）供日报展示
         #   - pending_order 不创建（今天已执行了订单，明天不应再执行）
